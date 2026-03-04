@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import T from "../styles/theme";
-import { Card, PageHeader, SectionLabel, GamePill, PulseDot, ColorPicker } from "../components/shared";
+import { Card, PageHeader, SectionLabel, GamePill, PulseDot, InfoBanner } from "../components/shared";
 import { GameEditModal } from "../components/modals";
 
 export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, ignoredProcesses, setIgnoredProcesses, platforms, setPlatforms }) {
@@ -10,13 +10,6 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
   const [ignVal, setIgnVal] = useState(ignoredProcesses.join("\n"));
   const [editGD, setEditGD] = useState(null);
   const [showAddMain, setShowAddMain] = useState(false);
-  const [dlS, setDlS] = useState(false);
-  const [dlD, setDlD] = useState(false);
-
-  const dlC = [
-    { id: 1, title: "The Shoot First Strategy #arcraiders" },
-    { id: 2, title: "I Lost 12 Games of Chess... #arcraiders" },
-  ];
 
   const togPlat = (key) => setPlatforms((p) => p.map((x) => (x.key === key ? { ...x, connected: !x.connected } : x)));
   const rmMain = (name) => setMainPool((p) => p.filter((n) => n !== name));
@@ -131,20 +124,10 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         )}
       </Card>
 
-      {/* Downloads */}
+      {/* Downloads — empty until Vizard integration */}
       <Card style={{ padding: 24 }}>
         <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Downloads</div>
-        <p style={{ color: T.textTertiary, fontSize: 13, fontFamily: T.mono, marginBottom: 12 }}>W:\...\Downloaded Clips\Vizard Clips</p>
-        {dlC.map((c) => (
-          <div key={c.id} style={{ padding: "8px 0", borderBottom: `1px solid ${T.border}` }}>
-            <div style={{ color: T.text, fontSize: 14 }}>{c.title}</div>
-          </div>
-        ))}
-        <div style={{ marginTop: 12 }}>
-          <button onClick={() => { setDlS(true); setTimeout(() => setDlD(true), 2000); }} disabled={dlS} style={{ padding: "12px 24px", borderRadius: T.radius.md, border: "none", background: dlD ? T.greenDim : dlS ? "rgba(255,255,255,0.04)" : T.accent, color: dlD ? T.green : dlS ? T.textMuted : "#fff", fontSize: 14, fontWeight: 700, cursor: dlS ? "default" : "pointer", fontFamily: T.font }}>
-            {dlD ? "✅ Downloaded" : dlS ? "Downloading..." : `Download ${dlC.length} Clips`}
-          </button>
-        </div>
+        <InfoBanner icon="🔗" color={T.accent}>Vizard clip downloads will appear here once API integration is complete.</InfoBanner>
       </Card>
 
       {editGD && <GameEditModal game={editGD} onSave={(g) => { onEditGame(g); setEditGD(null); }} onClose={() => setEditGD(null)} />}

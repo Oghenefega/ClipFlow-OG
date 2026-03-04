@@ -2,6 +2,49 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const chokidar = require("chokidar");
+const Store = require("electron-store");
+
+const store = new Store({
+  name: "clipflow-settings",
+  defaults: {
+    watchFolder: "W:\\YouTube Gaming Recordings Onward\\Vertical Recordings Onwards",
+    mainGame: "Arc Raiders",
+    mainPool: ["Arc Raiders", "Rocket League", "Valorant"],
+    gamesDb: [
+      { name: "Arc Raiders", tag: "AR", exe: ["ArcRaiders.exe"], color: "#ff6b35", dayCount: 24, hashtag: "arcraiders" },
+      { name: "Rocket League", tag: "RL", exe: ["RocketLeague.exe"], color: "#00b4d8", dayCount: 31, hashtag: "rocketleague" },
+      { name: "Valorant", tag: "Val", exe: ["VALORANT-Win64-Shipping.exe"], color: "#ff4655", dayCount: 42, hashtag: "valorant" },
+      { name: "Egging On", tag: "EO", exe: ["EggingOn.exe"], color: "#ffd23f", dayCount: 3, hashtag: "eggingon" },
+      { name: "Deadline Delivery", tag: "DD", exe: ["DeadlineDelivery.exe"], color: "#fca311", dayCount: 14, hashtag: "deadlinedelivery" },
+      { name: "Bionic Bay", tag: "BB", exe: ["BionicBay.exe"], color: "#06d6a0", dayCount: 7, hashtag: "bionicbay" },
+      { name: "Prince of Persia", tag: "PoP", exe: ["PrinceOfPersia.exe"], color: "#9b5de5", dayCount: 8, hashtag: "princeofpersia" },
+    ],
+    ignoredProcesses: ["explorer.exe", "steamwebhelper.exe", "dwm.exe", "ShellExperienceHost.exe", "zen.exe"],
+    platforms: [
+      { key: "youtube1", platform: "YouTube", abbr: "YT", name: "Fega", connected: true },
+      { key: "instagram", platform: "Instagram", abbr: "IG", name: "fegagaming", connected: true },
+      { key: "facebook", platform: "Facebook", abbr: "FB", name: "Fega Gaming", connected: true },
+      { key: "tiktok1", platform: "TikTok", abbr: "TT", name: "fega", connected: true },
+      { key: "youtube2", platform: "YouTube", abbr: "YT", name: "ThatGuy", connected: true },
+      { key: "tiktok2", platform: "TikTok", abbr: "TT", name: "thatguyfega", connected: true },
+    ],
+    weeklyTemplate: {
+      Monday: ["main","main","main","main","main","main","main","main"],
+      Tuesday: ["main","other","main","other","main","other","main","main"],
+      Wednesday: ["main","other","other","main","other","other","other","main"],
+      Thursday: ["main","other","other","main","other","other","main","main"],
+      Friday: ["main","other","other","main","other","other","other","main"],
+      Saturday: ["main","other","main","other","main","other","main","main"],
+    },
+    trackerData: [],
+    captionTemplates: {
+      tiktok: "{title} #{gametitle} #fyp #gamingontiktok #fega",
+      instagram: "{title} #{gametitle} #reels #gamingreels #fega",
+      facebook: "{title} #{gametitle} #gaming #fbreels #fega",
+    },
+    ytDescriptions: {},
+  },
+});
 
 let mainWindow;
 let watcher = null;
@@ -240,4 +283,18 @@ ipcMain.handle("dialog:openFile", async (_, options) => {
   });
   if (result.canceled) return null;
   return result.filePaths[0];
+});
+
+// ============ ELECTRON-STORE: persistent settings ============
+ipcMain.handle("store:get", async (_, key) => {
+  return store.get(key);
+});
+
+ipcMain.handle("store:set", async (_, key, value) => {
+  store.set(key, value);
+  return { success: true };
+});
+
+ipcMain.handle("store:getAll", async () => {
+  return store.store;
 });

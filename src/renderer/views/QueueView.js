@@ -273,6 +273,8 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
         </div>
         {editTmpl && <div style={{ marginTop: 12 }}><InfoBanner icon="✏️">Click cells to toggle Main (M) / Other (O).</InfoBanner></div>}
       </div>
+      {/* Bottom padding so tracker grid isn't cut off */}
+      <div style={{ height: 60 }} />
     </div>
   );
 }

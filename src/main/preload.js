@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld("clipflow", {
   saveFileDialog: (options) => ipcRenderer.invoke("dialog:saveFile", options),
   openFileDialog: (options) => ipcRenderer.invoke("dialog:openFile", options),
 
+  // Persistent store
+  storeGet: (key) => ipcRenderer.invoke("store:get", key),
+  storeSet: (key, value) => ipcRenderer.invoke("store:set", key, value),
+  storeGetAll: () => ipcRenderer.invoke("store:getAll"),
+
   // Platform info
   platform: process.platform,
 });

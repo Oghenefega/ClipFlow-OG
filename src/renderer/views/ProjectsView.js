@@ -22,7 +22,10 @@ export function ProjectsListView({ onSelect, clips, mainGame }) {
   return (
     <div>
       <PageHeader title="Projects" subtitle={`${MOCK_PROJECTS.length} projects`} />
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      <InfoBanner icon="🔗" color={T.accent}>Vizard API integration coming soon. Showing sample projects.</InfoBanner>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
         {MOCK_PROJECTS.map((p) => {
           const st = getStatus(p);
           return (
