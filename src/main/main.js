@@ -41,9 +41,9 @@ const store = new Store({
     },
     trackerData: [],
     captionTemplates: {
-      tiktok: "{title} #{gametitle} #fyp #gamingontiktok #fega",
-      instagram: "{title} #{gametitle} #reels #gamingreels #fega",
-      facebook: "{title} #{gametitle} #gaming #fbreels #fega",
+      tiktok: "{title} #{gametitle} #fyp #gamingontiktok #fega #fegagaming",
+      instagram: "{title} #{gametitle} #reels #gamingreels #fega #fegagaming",
+      facebook: "{title} #{gametitle} #gaming #fbreels #fega #fegagaming",
     },
     ytDescriptions: {},
     r2Config: {

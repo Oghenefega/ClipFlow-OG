@@ -115,9 +115,9 @@ export default function App() {
 
   // Captions
   const [captionTemplates, setCaptionTemplates] = useState({
-    tiktok: "{title} #{gametitle} #fyp #gamingontiktok #fega",
-    instagram: "{title} #{gametitle} #reels #gamingreels #fega",
-    facebook: "{title} #{gametitle} #gaming #fbreels #fega",
+    tiktok: "{title} #{gametitle} #fyp #gamingontiktok #fega #fegagaming",
+    instagram: "{title} #{gametitle} #reels #gamingreels #fega #fegagaming",
+    facebook: "{title} #{gametitle} #gaming #fbreels #fega #fegagaming",
   });
   const [ytDescriptions, setYtDescriptions] = useState(REAL_YT_DESCRIPTIONS);
 
