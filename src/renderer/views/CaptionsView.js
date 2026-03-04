@@ -8,6 +8,13 @@ export default function CaptionsView({ ytDescriptions, setYtDescriptions, captio
   const [editDesc, setEditDesc] = useState("");
   const [editPlat, setEditPlat] = useState(null);
   const [editTpl, setEditTpl] = useState("");
+  const [copied, setCopied] = useState(null);
+
+  const handleCopy = (game, desc) => {
+    navigator.clipboard.writeText(desc || "");
+    setCopied(game);
+    setTimeout(() => setCopied(null), 1500);
+  };
 
   const plats = [
     { id: "tiktok", label: "TikTok" },
@@ -55,7 +62,7 @@ export default function CaptionsView({ ytDescriptions, setYtDescriptions, captio
                     <div style={{ color: T.text, fontSize: 15, fontWeight: 700 }}>{game} Shorts</div>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => { setEditGame(game); setEditDesc(data.desc || ""); }} style={{ padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>Edit</button>
-                      <button onClick={() => { navigator.clipboard.writeText(data.desc || ""); }} style={{ padding: "6px 12px", borderRadius: 6, background: T.yellowDim, border: `1px solid ${T.yellowBorder}`, color: T.yellow, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Copy</button>
+                      <button onClick={() => handleCopy(game, data.desc)} style={{ padding: "6px 12px", borderRadius: 6, background: copied === game ? T.yellow : T.yellowDim, border: `1px solid ${copied === game ? T.yellow : T.yellowBorder}`, color: copied === game ? "#000" : T.yellow, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font, transition: "all 0.2s" }}>{copied === game ? "Copied!" : "Copy"}</button>
                       <button onClick={() => setYtDescriptions((p) => { const n = { ...p }; delete n[game]; return n; })} style={{ padding: "6px 12px", borderRadius: 6, background: T.redDim, border: `1px solid ${T.redBorder}`, color: T.red, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>Del</button>
                     </div>
                   </div>

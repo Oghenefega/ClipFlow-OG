@@ -130,8 +130,8 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
     setSelected((p) => ({ ...p, ...u }));
   };
 
-  // Fixed pill width for uniform grid
-  const PILL_W = 250;
+  // Responsive pill width — smaller min allows more columns when wide
+  const PILL_W = 200;
 
   return (
     <div>
@@ -196,8 +196,8 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
                             style={{
                               display: "flex",
                               alignItems: "center",
-                              gap: 8,
-                              padding: "8px 12px",
+                              gap: 6,
+                              padding: "7px 10px",
                               borderRadius: T.radius.md,
                               border: `1px solid ${isDone ? T.greenBorder : isSel ? T.accentBorder : T.border}`,
                               background: isDone ? "rgba(52,211,153,0.06)" : isSel ? T.accentDim : T.surface,
