@@ -23,12 +23,12 @@ const INITIAL_GAMES = [
 const INITIAL_MAIN_POOL = ["Arc Raiders", "Rocket League", "Valorant"];
 const INITIAL_IGNORED = ["explorer.exe", "steamwebhelper.exe", "dwm.exe", "ShellExperienceHost.exe", "zen.exe"];
 const PUBLISH_ORDER_INIT = [
-  { key: "youtube1", platform: "YouTube", abbr: "YT", name: "Fega", connected: true },
-  { key: "instagram", platform: "Instagram", abbr: "IG", name: "fegagaming", connected: true },
-  { key: "facebook", platform: "Facebook", abbr: "FB", name: "Fega Gaming", connected: true },
-  { key: "tiktok1", platform: "TikTok", abbr: "TT", name: "fega", connected: true },
-  { key: "youtube2", platform: "YouTube", abbr: "YT", name: "ThatGuy", connected: true },
-  { key: "tiktok2", platform: "TikTok", abbr: "TT", name: "thatguyfega", connected: true },
+  { key: "youtube1", platform: "YouTube", abbr: "YT", name: "Fega", connected: true, vizardAccountId: "dml6YXJkLTEtMTc0NTMz" },
+  { key: "instagram", platform: "Instagram", abbr: "IG", name: "fegagaming", connected: true, vizardAccountId: "dml6YXJkLTQtMTc0NTM2LTE4OTUw" },
+  { key: "facebook", platform: "Facebook", abbr: "FB", name: "Fega Gaming", connected: true, vizardAccountId: "dml6YXJkLTMtMTc0NTM1LTE4OTQ5" },
+  { key: "tiktok1", platform: "TikTok", abbr: "TT", name: "fega", connected: true, vizardAccountId: "dml6YXJkLTItMTc0NTM4" },
+  { key: "youtube2", platform: "YouTube", abbr: "YT", name: "ThatGuy", connected: true, vizardAccountId: "dml6YXJkLTEtMTc0NTM0" },
+  { key: "tiktok2", platform: "TikTok", abbr: "TT", name: "thatguyfega", connected: true, vizardAccountId: "dml6YXJkLTItMTc0NTM3" },
 ];
 const DEFAULT_TEMPLATE = {
   Monday: ["main","main","main","main","main","main","main","main"],
@@ -200,11 +200,12 @@ export default function App() {
         const videos = result.data.videos || [];
         const clips = videos.map((v, i) => ({
           id: `${projectId}-clip-${i}`,
+          videoId: v.videoId || null,
           title: v.title || "Untitled Clip",
           videoUrl: v.videoUrl || "",
           viralScore: v.viralScore || 0,
           viralReason: v.viralReason || "",
-          duration: Math.round(v.duration || 0),
+          duration: Math.round((v.videoMsDuration || v.duration || 0) / (v.videoMsDuration ? 1000 : 1)),
           transcript: v.transcript || "",
           status: "none",
         }));
@@ -313,6 +314,9 @@ export default function App() {
           setTrackerData={setTrackerData}
           weeklyTemplate={weeklyTemplate}
           setWeeklyTemplate={setWeeklyTemplate}
+          ytDescriptions={ytDescriptions}
+          captionTemplates={captionTemplates}
+          gamesDb={gamesDb}
         />
       );
     }

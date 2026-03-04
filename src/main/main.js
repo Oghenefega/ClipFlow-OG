@@ -24,12 +24,12 @@ const store = new Store({
     ],
     ignoredProcesses: ["explorer.exe", "steamwebhelper.exe", "dwm.exe", "ShellExperienceHost.exe", "zen.exe"],
     platforms: [
-      { key: "youtube1", platform: "YouTube", abbr: "YT", name: "Fega", connected: true },
-      { key: "instagram", platform: "Instagram", abbr: "IG", name: "fegagaming", connected: true },
-      { key: "facebook", platform: "Facebook", abbr: "FB", name: "Fega Gaming", connected: true },
-      { key: "tiktok1", platform: "TikTok", abbr: "TT", name: "fega", connected: true },
-      { key: "youtube2", platform: "YouTube", abbr: "YT", name: "ThatGuy", connected: true },
-      { key: "tiktok2", platform: "TikTok", abbr: "TT", name: "thatguyfega", connected: true },
+      { key: "youtube1", platform: "YouTube", abbr: "YT", name: "Fega", connected: true, vizardAccountId: "dml6YXJkLTEtMTc0NTMz" },
+      { key: "instagram", platform: "Instagram", abbr: "IG", name: "fegagaming", connected: true, vizardAccountId: "dml6YXJkLTQtMTc0NTM2LTE4OTUw" },
+      { key: "facebook", platform: "Facebook", abbr: "FB", name: "Fega Gaming", connected: true, vizardAccountId: "dml6YXJkLTMtMTc0NTM1LTE4OTQ5" },
+      { key: "tiktok1", platform: "TikTok", abbr: "TT", name: "fega", connected: true, vizardAccountId: "dml6YXJkLTItMTc0NTM4" },
+      { key: "youtube2", platform: "YouTube", abbr: "YT", name: "ThatGuy", connected: true, vizardAccountId: "dml6YXJkLTEtMTc0NTM0" },
+      { key: "tiktok2", platform: "TikTok", abbr: "TT", name: "thatguyfega", connected: true, vizardAccountId: "dml6YXJkLTItMTc0NTM3" },
     ],
     weeklyTemplate: {
       Monday: ["main","main","main","main","main","main","main","main"],
@@ -417,6 +417,57 @@ ipcMain.handle("vizard:queryProject", async (_, projectId) => {
     if (!apiKey) return { error: "Vizard API key not configured." };
 
     const result = await vizardRequest("GET", `/project/query/${projectId}`, apiKey);
+    return result;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Vizard: get social accounts connected to the Vizard account
+ipcMain.handle("vizard:getSocialAccounts", async () => {
+  try {
+    const apiKey = store.get("vizardApiKey");
+    if (!apiKey) return { error: "Vizard API key not configured." };
+
+    const result = await vizardRequest("GET", "/project/social-accounts", apiKey);
+    return result;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Vizard: publish a single clip to one social account
+ipcMain.handle("vizard:publishClip", async (_, options) => {
+  try {
+    const apiKey = store.get("vizardApiKey");
+    if (!apiKey) return { error: "Vizard API key not configured." };
+
+    const body = {
+      finalVideoId: options.finalVideoId,
+      socialAccountId: options.socialAccountId,
+    };
+    if (options.publishTime) body.publishTime = options.publishTime;
+    if (options.post !== undefined) body.post = options.post;
+    if (options.title) body.title = options.title;
+
+    const result = await vizardRequest("POST", "/project/publish-video", apiKey, body);
+    return result;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Vizard: generate AI caption for a clip
+ipcMain.handle("vizard:generateCaption", async (_, options) => {
+  try {
+    const apiKey = store.get("vizardApiKey");
+    if (!apiKey) return { error: "Vizard API key not configured." };
+
+    const result = await vizardRequest("POST", "/project/generate-ai-social-caption", apiKey, {
+      finalVideoId: options.finalVideoId,
+      platform: options.platform || "TikTok",
+      tone: options.tone || "interesting",
+    });
     return result;
   } catch (err) {
     return { error: err.message };

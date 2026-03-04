@@ -50,6 +50,9 @@ contextBridge.exposeInMainWorld("clipflow", {
   // Vizard AI
   vizardCreateProject: (videoUrl, projectName) => ipcRenderer.invoke("vizard:createProject", videoUrl, projectName),
   vizardQueryProject: (projectId) => ipcRenderer.invoke("vizard:queryProject", projectId),
+  vizardGetSocialAccounts: () => ipcRenderer.invoke("vizard:getSocialAccounts"),
+  vizardPublishClip: (options) => ipcRenderer.invoke("vizard:publishClip", options),
+  vizardGenerateCaption: (options) => ipcRenderer.invoke("vizard:generateCaption", options),
 
   // Platform info
   platform: process.platform,

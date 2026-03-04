@@ -1,10 +1,11 @@
 import React, { useState, useRef } from "react";
 import T from "../styles/theme";
-import { Card, PageHeader, SectionLabel, Badge, TabBar, Select, InfoBanner, extractGameTag, hasHashtag } from "../components/shared";
+import { Card, PageHeader, SectionLabel, Badge, Select, InfoBanner, extractGameTag, hasHashtag } from "../components/shared";
 
 const DAY_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const TIME_SLOTS = ["12:30 PM","1:30 PM","2:30 PM","3:30 PM","4:30 PM","7:30 PM","8:30 PM","9:30 PM"];
 const MONTHS_2026 = Array.from({ length: 12 }, (_, i) => ({ value: `2026-${String(i + 1).padStart(2, "0")}`, label: new Date(2026, i, 1).toLocaleString("en-US", { month: "long", year: "numeric" }) }));
+const STAGGER_MS = 30000; // 30 seconds between platforms
 
 const genTimeOptions = () => {
   const o = [];
@@ -39,21 +40,41 @@ const getUpcomingDates = () => {
   return d;
 };
 
-export default function QueueView({ allClips, mainGame, mainGameTag, platforms, trackerData, setTrackerData, weeklyTemplate, setWeeklyTemplate }) {
+// Build caption from template, replacing {title} and #{gametitle}
+const buildCaption = (template, clipTitle, gameHashtag) => {
+  if (!template) return clipTitle;
+  return template
+    .replace(/\{title\}/g, clipTitle)
+    .replace(/#\{gametitle\}/g, `#${gameHashtag || "gaming"}`);
+};
+
+// Find the game name from a clip's hashtag
+const findGameFromClip = (clipTitle, gamesDb) => {
+  const tag = extractGameTag(clipTitle);
+  if (!tag) return null;
+  return gamesDb.find((g) => g.hashtag === tag) || null;
+};
+
+export default function QueueView({
+  allClips, mainGame, mainGameTag, platforms, trackerData, setTrackerData,
+  weeklyTemplate, setWeeklyTemplate, ytDescriptions, captionTemplates, gamesDb,
+}) {
   const approved = Object.values(allClips).flat().filter((c) => (c.status === "approved" || c.status === "ready") && hasHashtag(c.title));
   const mainCount = approved.filter((c) => extractGameTag(c.title) === mainGameTag).length;
   const [selClip, setSelClip] = useState(null);
   const [schedAction, setSchedAction] = useState(null);
   const [schedDate, setSchedDate] = useState("");
   const [schedTime, setSchedTime] = useState("12:30");
-  const [published, setPublished] = useState({});
+  // publishStatus: { [clipId]: { state: "publishing"|"done"|"failed", platforms: { [key]: "pending"|"publishing"|"done"|"failed"|errorMsg } } }
+  const [publishStatus, setPublishStatus] = useState({});
   const [scheduled, setScheduled] = useState({});
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthJump, setMonthJump] = useState("");
   const [editTmpl, setEditTmpl] = useState(false);
   const fileRef = useRef(null);
+  const publishingRef = useRef(false);
   const dates = getUpcomingDates();
-  const activePlat = platforms.filter((p) => p.connected);
+  const activePlat = platforms.filter((p) => p.connected && p.vizardAccountId);
   const ref = new Date();
   ref.setDate(ref.getDate() + weekOffset * 7);
   const wd = getWeekDates(ref);
@@ -68,29 +89,192 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
     setTrackerData((p) => [...p, { date, day, time, title: clip.title, game: gt, type: gt === mainGameTag ? "main" : "other", platforms: activePlat.map((p) => p.abbr + "-" + p.name).join(", "), mainGameAtTime: mainGame }]);
   };
 
-  const pubNow = (id) => {
-    const clip = approved.find((c) => c.id === id);
-    if (!clip) return;
-    setPublished((p) => ({ ...p, [id]: "Publishing..." }));
+  // Real publish: call Vizard API for each connected platform with 30s stagger
+  const pubNow = async (clipId) => {
+    if (publishingRef.current) return;
+    const clip = approved.find((c) => c.id === clipId);
+    if (!clip || !clip.videoId) {
+      setPublishStatus((p) => ({ ...p, [clipId]: { state: "failed", error: "Missing videoId — clip may need re-processing", platforms: {} } }));
+      return;
+    }
+
+    publishingRef.current = true;
+    const game = findGameFromClip(clip.title, gamesDb);
+    const gameName = game?.name || "";
+    const gameHashtag = game?.hashtag || "";
+
+    // Initialize platform statuses
+    const platStatuses = {};
+    activePlat.forEach((p) => { platStatuses[p.key] = "pending"; });
+    setPublishStatus((prev) => ({ ...prev, [clipId]: { state: "publishing", platforms: { ...platStatuses } } }));
+    setSelClip(null);
+    setSchedAction(null);
+
+    let allSuccess = true;
+
+    for (let i = 0; i < activePlat.length; i++) {
+      const plat = activePlat[i];
+
+      // Update this platform to "publishing"
+      setPublishStatus((prev) => ({
+        ...prev,
+        [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: "publishing" } },
+      }));
+
+      try {
+        // Build caption based on platform type
+        const isYouTube = plat.platform === "YouTube";
+        let post;
+        if (isYouTube) {
+          // YouTube gets the full description
+          const ytDesc = ytDescriptions?.[gameName];
+          post = ytDesc?.desc || clip.title;
+        } else {
+          // Other platforms get caption template
+          const templateKey = plat.platform.toLowerCase().replace(/ /g, "");
+          const template = captionTemplates?.[templateKey] || captionTemplates?.tiktok || "{title}";
+          post = buildCaption(template, clip.title, gameHashtag);
+        }
+
+        const result = await window.clipflow.vizardPublishClip({
+          finalVideoId: clip.videoId,
+          socialAccountId: plat.vizardAccountId,
+          title: isYouTube ? clip.title : undefined,
+          post,
+        });
+
+        if (result.error || (result.code && result.code !== 2000)) {
+          const errMsg = result.error || result.errMsg || `Error code ${result.code}`;
+          setPublishStatus((prev) => ({
+            ...prev,
+            [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: errMsg } },
+          }));
+          allSuccess = false;
+        } else {
+          setPublishStatus((prev) => ({
+            ...prev,
+            [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: "done" } },
+          }));
+        }
+      } catch (err) {
+        setPublishStatus((prev) => ({
+          ...prev,
+          [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: err.message || "Network error" } },
+        }));
+        allSuccess = false;
+      }
+
+      // Wait 30s before next platform (except after last one)
+      if (i < activePlat.length - 1) {
+        await new Promise((r) => setTimeout(r, STAGGER_MS));
+      }
+    }
+
+    // Final status
+    setPublishStatus((prev) => ({
+      ...prev,
+      [clipId]: { ...prev[clipId], state: allSuccess ? "done" : "failed" },
+    }));
+
+    // Log to tracker
     const now = new Date();
     const dn = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][now.getDay()];
-    setTimeout(() => {
-      setPublished((p) => ({ ...p, [id]: "✅ Published!" }));
-      logPost(clip, now.toISOString().split("T")[0], dn, now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }));
-    }, 2500);
-    setSelClip(null);
-    setSchedAction(null);
+    logPost(clip, now.toISOString().split("T")[0], dn, now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }));
+
+    publishingRef.current = false;
   };
 
-  const schedClip = (id) => {
-    const clip = approved.find((c) => c.id === id);
-    if (!clip) return;
+  // Real schedule: call Vizard API with publishTime for each platform with 30s stagger
+  const schedClip = async (clipId) => {
+    if (publishingRef.current) return;
+    const clip = approved.find((c) => c.id === clipId);
+    if (!clip || !clip.videoId) {
+      setPublishStatus((p) => ({ ...p, [clipId]: { state: "failed", error: "Missing videoId", platforms: {} } }));
+      return;
+    }
+
+    publishingRef.current = true;
+    const game = findGameFromClip(clip.title, gamesDb);
+    const gameName = game?.name || "";
+    const gameHashtag = game?.hashtag || "";
     const d = dates.find((x) => x.iso === schedDate);
     const tl = TIME_OPTIONS.find((x) => x.value === schedTime)?.label || schedTime;
-    setScheduled((p) => ({ ...p, [id]: `${d?.label || schedDate} at ${tl}` }));
-    logPost(clip, schedDate, d?.dayName || "", tl);
+
+    // Build base publish timestamp
+    const [hh, mm] = schedTime.split(":").map(Number);
+    const baseDate = new Date(`${schedDate}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
+    const baseTimestamp = baseDate.getTime();
+
+    // Initialize platform statuses
+    const platStatuses = {};
+    activePlat.forEach((p) => { platStatuses[p.key] = "pending"; });
+    setPublishStatus((prev) => ({ ...prev, [clipId]: { state: "publishing", platforms: { ...platStatuses } } }));
     setSelClip(null);
     setSchedAction(null);
+
+    let allSuccess = true;
+
+    for (let i = 0; i < activePlat.length; i++) {
+      const plat = activePlat[i];
+      const staggeredTime = baseTimestamp + (i * STAGGER_MS);
+
+      setPublishStatus((prev) => ({
+        ...prev,
+        [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: "publishing" } },
+      }));
+
+      try {
+        const isYouTube = plat.platform === "YouTube";
+        let post;
+        if (isYouTube) {
+          const ytDesc = ytDescriptions?.[gameName];
+          post = ytDesc?.desc || clip.title;
+        } else {
+          const templateKey = plat.platform.toLowerCase().replace(/ /g, "");
+          const template = captionTemplates?.[templateKey] || captionTemplates?.tiktok || "{title}";
+          post = buildCaption(template, clip.title, gameHashtag);
+        }
+
+        const result = await window.clipflow.vizardPublishClip({
+          finalVideoId: clip.videoId,
+          socialAccountId: plat.vizardAccountId,
+          publishTime: staggeredTime,
+          title: isYouTube ? clip.title : undefined,
+          post,
+        });
+
+        if (result.error || (result.code && result.code !== 2000)) {
+          const errMsg = result.error || result.errMsg || `Error code ${result.code}`;
+          setPublishStatus((prev) => ({
+            ...prev,
+            [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: errMsg } },
+          }));
+          allSuccess = false;
+        } else {
+          setPublishStatus((prev) => ({
+            ...prev,
+            [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: "done" } },
+          }));
+        }
+      } catch (err) {
+        setPublishStatus((prev) => ({
+          ...prev,
+          [clipId]: { ...prev[clipId], platforms: { ...prev[clipId].platforms, [plat.key]: err.message || "Network error" } },
+        }));
+        allSuccess = false;
+      }
+    }
+
+    // Final status
+    const finalState = allSuccess ? "done" : "failed";
+    setPublishStatus((prev) => ({
+      ...prev,
+      [clipId]: { ...prev[clipId], state: finalState },
+    }));
+    setScheduled((p) => ({ ...p, [clipId]: `${d?.label || schedDate} at ${tl}` }));
+    logPost(clip, schedDate, d?.dayName || "", tl);
+
+    publishingRef.current = false;
   };
 
   const toggleCell = (di, si) => {
@@ -140,6 +324,15 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
     setWeekOffset(Math.round((t - now) / (7 * 864e5)));
   };
 
+  // Platform status display helper
+  const getPlatStatusIcon = (status) => {
+    if (status === "pending") return { icon: "\u23f3", color: T.textMuted };
+    if (status === "publishing") return { icon: "\u2b06", color: T.yellow };
+    if (status === "done") return { icon: "\u2705", color: T.green };
+    // Any other string is an error message
+    return { icon: "\u274c", color: T.red };
+  };
+
   return (
     <div>
       <PageHeader title="Queue & Schedule" subtitle={`${approved.length} clips ready`} />
@@ -160,29 +353,69 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
         {approved.map((clip) => {
           const isM = extractGameTag(clip.title) === mainGameTag;
-          const isPub = published[clip.id];
+          const ps = publishStatus[clip.id];
+          const isPub = ps?.state === "done";
+          const isPublishing = ps?.state === "publishing";
+          const isFailed = ps?.state === "failed";
           const isSch = scheduled[clip.id];
           const isSel = selClip === clip.id;
+          const hasVideoId = !!clip.videoId;
           return (
             <div key={clip.id}>
-              <Card onClick={() => { setSelClip(isSel ? null : clip.id); setSchedAction(null); }} style={{ padding: "14px 18px", borderLeft: `3px solid ${isM ? T.accent : T.green}`, borderColor: isSel ? T.accentBorder : isPub ? T.greenBorder : T.border, background: isSel ? T.accentGlow : isPub ? "rgba(52,211,153,0.03)" : T.surface, opacity: isPub ? 0.6 : 1 }}>
+              <Card onClick={() => { if (!isPublishing) { setSelClip(isSel ? null : clip.id); setSchedAction(null); } }} style={{ padding: "14px 18px", borderLeft: `3px solid ${isM ? T.accent : T.green}`, borderColor: isSel ? T.accentBorder : isPub ? T.greenBorder : isFailed ? T.redBorder : T.border, background: isSel ? T.accentGlow : isPub ? "rgba(52,211,153,0.03)" : T.surface, opacity: isPub ? 0.6 : 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                   <div style={{ flex: 1, color: T.text, fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{clip.title}</div>
-                  {isPub && <span style={{ color: T.green, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{isPub}</span>}
-                  {isSch && !isPub && <span style={{ color: T.accent, fontSize: 11, fontWeight: 600, fontFamily: T.mono, flexShrink: 0 }}>📅 {isSch}</span>}
+                  {isPub && <span style={{ color: T.green, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>Published</span>}
+                  {isPublishing && <span style={{ color: T.yellow, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>Publishing...</span>}
+                  {isFailed && !isPub && <span style={{ color: T.red, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>Failed</span>}
+                  {isSch && !isPub && !isPublishing && !isFailed && <span style={{ color: T.accent, fontSize: 11, fontWeight: 600, fontFamily: T.mono, flexShrink: 0 }}>Scheduled {isSch}</span>}
+                  {!hasVideoId && <span style={{ color: T.yellow, fontSize: 11, fontWeight: 600, flexShrink: 0 }}>No video ID</span>}
                 </div>
               </Card>
-              {isSel && !isPub && (
+
+              {/* Publishing progress per platform */}
+              {(isPublishing || isFailed) && ps?.platforms && (
+                <Card style={{ padding: "14px 18px", marginTop: 4, borderColor: isPublishing ? T.yellowBorder : T.redBorder }}>
+                  <SectionLabel>{isPublishing ? "Publishing to platforms..." : "Publish results"}</SectionLabel>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                    {activePlat.map((plat) => {
+                      const status = ps.platforms[plat.key] || "pending";
+                      const { icon, color } = getPlatStatusIcon(status);
+                      const isError = status !== "pending" && status !== "publishing" && status !== "done";
+                      return (
+                        <div key={plat.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+                          <span style={{ fontSize: 14, width: 20, textAlign: "center" }}>{icon}</span>
+                          <span style={{ color: T.text, fontSize: 13, fontWeight: 600, minWidth: 100 }}>{plat.abbr} — {plat.name}</span>
+                          <span style={{ color, fontSize: 12, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {status === "pending" ? "Waiting..." : status === "publishing" ? "Sending..." : status === "done" ? "Sent" : status}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {isFailed && ps.error && (
+                    <div style={{ marginTop: 10, color: T.red, fontSize: 12, fontWeight: 600 }}>{ps.error}</div>
+                  )}
+                </Card>
+              )}
+
+              {/* Publish/Schedule action panel */}
+              {isSel && !isPub && !isPublishing && (
                 <Card style={{ padding: "16px 20px", marginTop: 4, borderColor: T.accentBorder }}>
+                  {!hasVideoId && (
+                    <div style={{ marginBottom: 12 }}>
+                      <InfoBanner color={T.yellow} icon={"\u26a0\ufe0f"}>This clip has no Vizard video ID. It may need to be re-processed before publishing.</InfoBanner>
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 8, marginBottom: schedAction === "schedule" ? 14 : 0 }}>
-                    <button onClick={() => pubNow(clip.id)} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: T.green, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>⚡ Publish Now</button>
-                    <button onClick={() => setSchedAction("schedule")} style={{ padding: "10px 20px", borderRadius: 8, border: schedAction === "schedule" ? `1px solid ${T.accentBorder}` : `1px solid ${T.border}`, background: schedAction === "schedule" ? T.accentDim : "rgba(255,255,255,0.03)", color: schedAction === "schedule" ? T.accentLight : T.textSecondary, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>📅 Schedule</button>
+                    <button onClick={() => pubNow(clip.id)} disabled={!hasVideoId || publishingRef.current} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: hasVideoId ? T.green : "rgba(255,255,255,0.04)", color: hasVideoId ? "#fff" : T.textMuted, fontSize: 13, fontWeight: 700, cursor: hasVideoId ? "pointer" : "default", fontFamily: T.font }}>Publish Now</button>
+                    <button onClick={() => setSchedAction("schedule")} disabled={!hasVideoId} style={{ padding: "10px 20px", borderRadius: 8, border: schedAction === "schedule" ? `1px solid ${T.accentBorder}` : `1px solid ${T.border}`, background: schedAction === "schedule" ? T.accentDim : "rgba(255,255,255,0.03)", color: schedAction === "schedule" ? T.accentLight : T.textSecondary, fontSize: 13, fontWeight: 700, cursor: hasVideoId ? "pointer" : "default", fontFamily: T.font }}>Schedule</button>
                   </div>
                   {schedAction === "schedule" && (
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <Select value={schedDate} onChange={setSchedDate} options={[{ value: "", label: "Pick date..." }, ...dates.map((d) => ({ value: d.iso, label: d.label }))]} style={{ padding: "10px 14px", fontSize: 13 }} />
                       <Select value={schedTime} onChange={setSchedTime} options={TIME_OPTIONS} style={{ padding: "10px 14px", fontSize: 13 }} />
-                      <button onClick={() => schedClip(clip.id)} disabled={!schedDate} style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: schedDate ? T.accent : "rgba(255,255,255,0.04)", color: schedDate ? "#fff" : T.textMuted, fontSize: 13, fontWeight: 700, cursor: schedDate ? "pointer" : "default", fontFamily: T.font }}>Confirm</button>
+                      <button onClick={() => schedClip(clip.id)} disabled={!schedDate || publishingRef.current} style={{ padding: "10px 18px", borderRadius: 8, border: "none", background: schedDate ? T.accent : "rgba(255,255,255,0.04)", color: schedDate ? "#fff" : T.textMuted, fontSize: 13, fontWeight: 700, cursor: schedDate ? "pointer" : "default", fontFamily: T.font }}>Confirm</button>
                     </div>
                   )}
                 </Card>
@@ -190,16 +423,28 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
             </div>
           );
         })}
+        {approved.length === 0 && (
+          <Card style={{ padding: 40, textAlign: "center" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>{"\ud83d\udccb"}</div>
+            <div style={{ color: T.textSecondary, fontSize: 15, fontWeight: 600 }}>No clips queued</div>
+            <div style={{ color: T.textTertiary, fontSize: 13, marginTop: 8 }}>Approve clips in the Projects tab to see them here.</div>
+          </Card>
+        )}
       </div>
 
       {/* Publishing order */}
       <Card style={{ padding: "14px 20px", marginBottom: 28 }}>
-        <SectionLabel>Publishing to · 30s stagger</SectionLabel>
+        <SectionLabel>Publishing to {activePlat.length} accounts · 30s stagger</SectionLabel>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
           {activePlat.map((p, i) => (
             <span key={i} style={{ background: "rgba(255,255,255,0.03)", padding: "5px 12px", borderRadius: 8, color: T.textSecondary, fontSize: 12, fontWeight: 600, border: `1px solid ${T.border}` }}>{i + 1}. {p.abbr} — {p.name}</span>
           ))}
         </div>
+        {activePlat.length === 0 && (
+          <div style={{ marginTop: 10 }}>
+            <InfoBanner color={T.yellow} icon={"\u26a0\ufe0f"}>No connected platforms with Vizard account IDs. Check Settings.</InfoBanner>
+          </div>
+        )}
       </Card>
 
       {/* TRACKER */}
@@ -210,8 +455,8 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
             <button onClick={() => setEditTmpl(!editTmpl)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${editTmpl ? T.accentBorder : T.border}`, background: editTmpl ? T.accentDim : "transparent", color: editTmpl ? T.accentLight : T.textTertiary, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>{editTmpl ? "Done" : "Edit Template"}</button>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={exportCSV} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>📤 Export</button>
-            <button onClick={() => fileRef.current?.click()} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>📥 Import</button>
+            <button onClick={exportCSV} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Export</button>
+            <button onClick={() => fileRef.current?.click()} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Import</button>
             <input ref={fileRef} type="file" accept=".csv" onChange={importCSV} style={{ display: "none" }} />
           </div>
         </div>
@@ -228,12 +473,12 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
 
         {/* Week navigation */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <button onClick={() => setWeekOffset((w) => w - 1)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 14, cursor: "pointer", fontFamily: T.font }}>←</button>
+          <button onClick={() => setWeekOffset((w) => w - 1)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 14, cursor: "pointer", fontFamily: T.font }}>{"\u2190"}</button>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ color: T.text, fontSize: 14, fontWeight: 700 }}>{getWeekLabel(ref)}</span>
             <Select value={monthJump} onChange={jumpMonth} options={[{ value: "", label: "Jump..." }, ...MONTHS_2026]} style={{ padding: "6px 10px", fontSize: 12 }} />
           </div>
-          <button onClick={() => setWeekOffset((w) => w + 1)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 14, cursor: "pointer", fontFamily: T.font }}>→</button>
+          <button onClick={() => setWeekOffset((w) => w + 1)} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 14, cursor: "pointer", fontFamily: T.font }}>{"\u2192"}</button>
         </div>
 
         {/* Weekly grid */}
@@ -261,7 +506,7 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
                     return (
                       <td key={di} style={{ padding: 2 }}>
                         <div onClick={() => toggleCell(di, si)} style={{ height: 38, borderRadius: 6, cursor: editTmpl ? "pointer" : "default", background: fl ? (isM ? "rgba(139,92,246,0.35)" : "rgba(52,211,153,0.35)") : (isM ? "rgba(139,92,246,0.06)" : "rgba(52,211,153,0.06)"), border: editTmpl ? `1px dashed ${isM ? "rgba(139,92,246,0.4)" : "rgba(52,211,153,0.4)"}` : "1px solid transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: fl ? "rgba(255,255,255,0.9)" : T.textMuted }}>
-                          {fl ? "✓" : (isM ? "M" : "O")}
+                          {fl ? "\u2713" : (isM ? "M" : "O")}
                         </div>
                       </td>
                     );
@@ -271,7 +516,7 @@ export default function QueueView({ allClips, mainGame, mainGameTag, platforms, 
             </tbody>
           </table>
         </div>
-        {editTmpl && <div style={{ marginTop: 12 }}><InfoBanner icon="✏️">Click cells to toggle Main (M) / Other (O).</InfoBanner></div>}
+        {editTmpl && <div style={{ marginTop: 12 }}><InfoBanner icon={"\u270f\ufe0f"}>Click cells to toggle Main (M) / Other (O).</InfoBanner></div>}
       </div>
       {/* Bottom padding so tracker grid isn't cut off */}
       <div style={{ height: 60 }} />
