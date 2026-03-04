@@ -1,0 +1,38 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("clipflow", {
+  // File system
+  pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
+  readDir: (dir) => ipcRenderer.invoke("fs:readDir", dir),
+  renameFile: (oldPath, newPath) => ipcRenderer.invoke("fs:renameFile", oldPath, newPath),
+  fileExists: (path) => ipcRenderer.invoke("fs:exists", path),
+  readFile: (path) => ipcRenderer.invoke("fs:readFile", path),
+  writeFile: (path, content) => ipcRenderer.invoke("fs:writeFile", path, content),
+
+  // File watcher
+  startWatching: (folder) => ipcRenderer.invoke("watcher:start", folder),
+  stopWatching: () => ipcRenderer.invoke("watcher:stop"),
+  onFileAdded: (callback) => {
+    ipcRenderer.on("watcher:fileAdded", (_, data) => callback(data));
+  },
+  onFileRemoved: (callback) => {
+    ipcRenderer.on("watcher:fileRemoved", (_, data) => callback(data));
+  },
+  removeFileListeners: () => {
+    ipcRenderer.removeAllListeners("watcher:fileAdded");
+    ipcRenderer.removeAllListeners("watcher:fileRemoved");
+  },
+
+  // OBS
+  parseOBSLog: (logDir) => ipcRenderer.invoke("obs:parseLog", logDir),
+
+  // Shell
+  openFolder: (path) => ipcRenderer.invoke("shell:openFolder", path),
+
+  // Dialogs
+  saveFileDialog: (options) => ipcRenderer.invoke("dialog:saveFile", options),
+  openFileDialog: (options) => ipcRenderer.invoke("dialog:openFile", options),
+
+  // Platform info
+  platform: process.platform,
+});
