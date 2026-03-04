@@ -57,6 +57,32 @@ const buildYouTubeTitle = (clipTitle, gameHashtag) => {
   return `${clipTitle} ${tag} #shorts`;
 };
 
+// Snap a time string to the nearest TIME_SLOT for tracker grid matching
+const SLOT_MINUTES = TIME_SLOTS.map((s) => {
+  const [t, ap] = s.split(" ");
+  let [h, m] = t.split(":").map(Number);
+  if (ap === "PM" && h !== 12) h += 12;
+  if (ap === "AM" && h === 12) h = 0;
+  return h * 60 + m;
+});
+const snapToSlot = (timeStr) => {
+  // Parse a time like "3:45 PM" into minutes
+  const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return timeStr;
+  let h = parseInt(match[1]), m = parseInt(match[2]);
+  const ap = match[3].toUpperCase();
+  if (ap === "PM" && h !== 12) h += 12;
+  if (ap === "AM" && h === 12) h = 0;
+  const mins = h * 60 + m;
+  // Find nearest slot
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < SLOT_MINUTES.length; i++) {
+    const d = Math.abs(SLOT_MINUTES[i] - mins);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
+  return TIME_SLOTS[best];
+};
+
 // Find the game name from a clip's hashtag
 const findGameFromClip = (clipTitle, gamesDb) => {
   const tag = extractGameTag(clipTitle);
@@ -95,7 +121,8 @@ export default function QueueView({
 
   const logPost = (clip, date, day, time) => {
     const gt = extractGameTag(clip.title) || "unknown";
-    setTrackerData((p) => [...p, { date, day, time, title: clip.title, game: gt, type: gt === mainGameTag ? "main" : "other", platforms: activePlat.map((p) => p.abbr + "-" + p.name).join(", "), mainGameAtTime: mainGame }]);
+    const snapped = snapToSlot(time);
+    setTrackerData((p) => [...p, { date, day, time: snapped, title: clip.title, game: gt, type: gt === mainGameTag ? "main" : "other", platforms: activePlat.map((p) => p.abbr + "-" + p.name).join(", "), mainGameAtTime: mainGame }]);
   };
 
   // Real publish: call Vizard API for each connected platform with 30s stagger
