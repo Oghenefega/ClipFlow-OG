@@ -1,47 +1,125 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import T from "../styles/theme";
 import { Card, Badge, PageHeader, TabBar, InfoBanner, ViralBar, hasHashtag } from "../components/shared";
 
-const MOCK_PROJECTS = [
-  { id: "p1", name: "Arc Raiders Day 19 Part 4", game: "Arc Raiders", status: "ready", clipCount: 5 },
-  { id: "p2", name: "Arc Raiders Day 13 Part 2", game: "Arc Raiders", status: "ready", clipCount: 3 },
-  { id: "p3", name: "Rocket League Day 5", game: "Rocket League", status: "ready", clipCount: 2 },
-  { id: "p4", name: "Arc Raiders Day 14 Pt1", game: "Arc Raiders", status: "processing", clipCount: 0, progress: 65 },
-];
-
 // ============ PROJECT LIST ============
-export function ProjectsListView({ onSelect, clips, mainGame }) {
+export function ProjectsListView({ vizardProjects = [], onSelect, onPollProject, mainGame, gamesDb = [] }) {
+  // Poll for processing projects every 30 seconds
+  useEffect(() => {
+    const processing = vizardProjects.filter((p) => p.status === "processing");
+    if (processing.length === 0) return;
+
+    const poll = async () => {
+      for (const proj of processing) {
+        if (onPollProject) await onPollProject(proj.id);
+      }
+    };
+
+    poll(); // poll immediately on mount
+    const interval = setInterval(poll, 30000);
+    return () => clearInterval(interval);
+  }, [vizardProjects, onPollProject]);
+
+  const getGameColor = (p) => {
+    if (p.gameColor) return p.gameColor;
+    const g = gamesDb.find((x) => x.name === p.game);
+    return g ? g.color : T.accent;
+  };
+
   const getStatus = (p) => {
     if (p.status === "processing") return "processing";
-    const pc = clips[p.id];
-    if (!pc) return p.status;
-    const tagged = pc.filter((c) => hasHashtag(c.title));
-    return tagged.length > 0 && tagged.filter((c) => c.status === "none").length === 0 ? "done" : "ready";
+    if (p.status === "error") return "error";
+    if (p.clips && p.clips.length > 0) {
+      const tagged = p.clips.filter((c) => hasHashtag(c.title));
+      const allReviewed = tagged.length > 0 && tagged.filter((c) => c.status === "none").length === 0;
+      return allReviewed ? "done" : "ready";
+    }
+    return "ready";
   };
+
+  if (vizardProjects.length === 0) {
+    return (
+      <div>
+        <PageHeader title="Projects" subtitle="Vizard AI clip review" />
+        <Card style={{ padding: 40, textAlign: "center" }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>{"\ud83c\udfac"}</div>
+          <div style={{ color: T.textSecondary, fontSize: 15, fontWeight: 600 }}>No projects yet</div>
+          <div style={{ color: T.textTertiary, fontSize: 13, marginTop: 8 }}>Upload files in the Upload tab to create Vizard projects.</div>
+        </Card>
+      </div>
+    );
+  }
+
+  // Sort: processing first, then ready, then done, then error
+  const sorted = [...vizardProjects].sort((a, b) => {
+    const order = { processing: 0, ready: 1, done: 2, error: 3 };
+    const sa = order[getStatus(a)] ?? 1;
+    const sb = order[getStatus(b)] ?? 1;
+    if (sa !== sb) return sa - sb;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  const processingCount = sorted.filter((p) => p.status === "processing").length;
+  const readyCount = sorted.filter((p) => getStatus(p) === "ready").length;
 
   return (
     <div>
-      <PageHeader title="Projects" subtitle={`${MOCK_PROJECTS.length} projects`} />
-
-      <InfoBanner icon="🔗" color={T.accent}>Vizard API integration coming soon. Showing sample projects.</InfoBanner>
+      <PageHeader title="Projects" subtitle={`${vizardProjects.length} project${vizardProjects.length !== 1 ? "s" : ""}${processingCount > 0 ? ` \u00b7 ${processingCount} processing` : ""}${readyCount > 0 ? ` \u00b7 ${readyCount} to review` : ""}`} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
-        {MOCK_PROJECTS.map((p) => {
+        {sorted.map((p) => {
           const st = getStatus(p);
+          const gameColor = getGameColor(p);
+          const clipCount = p.clips ? p.clips.length : 0;
+
           return (
-            <Card key={p.id} onClick={() => p.status === "ready" && onSelect(p)} borderColor={st === "done" ? T.greenBorder : T.border} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 20, opacity: p.status === "processing" ? 0.5 : 1 }}>
+            <Card
+              key={p.id}
+              onClick={() => (st === "ready" || st === "done") && onSelect(p)}
+              borderColor={st === "done" ? T.greenBorder : st === "error" ? T.redBorder : T.border}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: 20, opacity: st === "processing" ? 0.7 : st === "error" ? 0.5 : 1,
+                cursor: st === "ready" || st === "done" ? "pointer" : "default",
+              }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1 }}>
-                <div style={{ width: 46, height: 46, borderRadius: T.radius.md, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0, background: st === "done" ? T.greenDim : p.game === mainGame ? T.accentDim : T.greenDim }}>
-                  {st === "done" ? "✅" : "🎮"}
+                <div style={{
+                  width: 46, height: 46, borderRadius: T.radius.md,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 22, flexShrink: 0,
+                  background: st === "done" ? T.greenDim : st === "error" ? T.redDim : `${gameColor}18`,
+                }}>
+                  {st === "done" ? "\u2705" : st === "error" ? "\u274c" : st === "processing" ? "\u23f3" : "\ud83c\udfac"}
                 </div>
-                <div>
-                  <div style={{ color: T.text, fontSize: 16, fontWeight: 600 }}>{p.name}</div>
-                  <div style={{ color: T.textTertiary, fontSize: 13, marginTop: 4 }}>
-                    {p.status === "processing" ? <span>Processing <span style={{ fontFamily: T.mono, color: T.yellow }}>{p.progress}%</span></span> : <><span style={{ fontFamily: T.mono }}>{p.clipCount}</span> clips</>}
+                <div style={{ flex: 1, overflow: "hidden" }}>
+                  <div style={{ color: T.text, fontSize: 16, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                    {p.game && (
+                      <span style={{
+                        display: "inline-flex", padding: "2px 6px",
+                        background: `${gameColor}18`, border: `1px solid ${gameColor}44`,
+                        borderRadius: 4, fontSize: 10, fontWeight: 700, color: gameColor,
+                        fontFamily: T.mono,
+                      }}>
+                        {p.gameTag || p.game}
+                      </span>
+                    )}
+                    <span style={{ color: T.textTertiary, fontSize: 13 }}>
+                      {st === "processing" ? (
+                        <span>Processing{p.progress ? <span style={{ fontFamily: T.mono, color: T.yellow }}> {p.progress}%</span> : "..."}</span>
+                      ) : st === "error" ? (
+                        <span style={{ color: T.red }}>{p.error || "Failed"}</span>
+                      ) : (
+                        <><span style={{ fontFamily: T.mono }}>{clipCount}</span> clip{clipCount !== 1 ? "s" : ""}</>
+                      )}
+                    </span>
                   </div>
                 </div>
               </div>
-              <Badge color={st === "done" ? T.green : st === "processing" ? T.yellow : T.accent}>{st === "done" ? "Done" : st === "processing" ? "Processing" : "Review"}</Badge>
+              <Badge color={st === "done" ? T.green : st === "processing" ? T.yellow : st === "error" ? T.red : T.accent}>
+                {st === "done" ? "Done" : st === "processing" ? "Processing" : st === "error" ? "Error" : "Review"}
+              </Badge>
             </Card>
           );
         })}
@@ -51,11 +129,12 @@ export function ProjectsListView({ onSelect, clips, mainGame }) {
 }
 
 // ============ CLIP BROWSER ============
-export function ClipBrowser({ project, clips, onBack, onUpdate, onTranscript, onEditTitle }) {
+export function ClipBrowser({ project, onBack, onUpdateClip, onTranscript, onEditClipTitle }) {
   const [filter, setFilter] = useState("all");
   const [editId, setEditId] = useState(null);
   const [editText, setEditText] = useState("");
 
+  const clips = project.clips || [];
   const isApproved = (c) => c.status === "approved" || c.status === "ready";
   const tagged = clips.filter((c) => hasHashtag(c.title));
   const untagged = clips.filter((c) => !hasHashtag(c.title));
@@ -64,11 +143,11 @@ export function ClipBrowser({ project, clips, onBack, onUpdate, onTranscript, on
 
   return (
     <div>
-      <PageHeader title={project.name} subtitle={`${approved} approved · ${tagged.filter((c) => c.status === "none").length} pending`} backAction={onBack} />
+      <PageHeader title={project.name} subtitle={`${approved} approved \u00b7 ${tagged.filter((c) => c.status === "none").length} pending`} backAction={onBack} />
 
       <TabBar tabs={[{ id: "all", label: "All", count: tagged.length }, { id: "pending", label: "Pending", count: tagged.filter((c) => c.status === "none").length }, { id: "approved", label: "Approved", count: approved }]} active={filter} onChange={setFilter} />
 
-      {untagged.length > 0 && <div style={{ margin: "16px 0 0" }}><InfoBanner color={T.yellow} icon="⚠️">{untagged.length} clip{untagged.length > 1 ? "s" : ""} hidden — no hashtag.</InfoBanner></div>}
+      {untagged.length > 0 && <div style={{ margin: "16px 0 0" }}><InfoBanner color={T.yellow} icon={"\u26a0\ufe0f"}>{untagged.length} clip{untagged.length > 1 ? "s" : ""} hidden {"\u2014"} no hashtag.</InfoBanner></div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
         {filtered.map((clip) => {
@@ -81,30 +160,35 @@ export function ClipBrowser({ project, clips, onBack, onUpdate, onTranscript, on
                   {editId === clip.id ? (
                     <div style={{ display: "flex", gap: 8 }}>
                       <input value={editText} onChange={(e) => setEditText(e.target.value)} autoFocus style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.accentBorder}`, borderRadius: T.radius.md, padding: "10px 14px", color: T.text, fontSize: 15, fontWeight: 600, fontFamily: T.font, outline: "none" }} />
-                      <button onClick={() => { onEditTitle(clip.id, editText); setEditId(null); }} style={{ background: T.accent, border: "none", borderRadius: T.radius.md, padding: "10px 18px", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save</button>
+                      <button onClick={() => { onEditClipTitle(project.id, clip.id, editText); setEditId(null); }} style={{ background: T.accent, border: "none", borderRadius: T.radius.md, padding: "10px 18px", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save</button>
                     </div>
                   ) : (
-                    <div onClick={() => { setEditId(clip.id); setEditText(clip.title); }} style={{ color: T.text, fontSize: 16, fontWeight: 600, lineHeight: 1.5, cursor: "pointer" }}>{clip.title} <span style={{ color: T.textMuted, fontSize: 13 }}>✎</span></div>
+                    <div onClick={() => { setEditId(clip.id); setEditText(clip.title); }} style={{ color: T.text, fontSize: 16, fontWeight: 600, lineHeight: 1.5, cursor: "pointer" }}>{clip.title} <span style={{ color: T.textMuted, fontSize: 13 }}>{"\u270e"}</span></div>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button onClick={() => onUpdate(clip.id, ca ? "none" : "approved")} style={{ width: 42, height: 42, borderRadius: T.radius.md, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", border: ca ? `1px solid ${T.greenBorder}` : `1px solid ${T.border}`, cursor: "pointer", background: ca ? T.greenDim : "rgba(255,255,255,0.04)", color: ca ? T.green : T.textTertiary }}>👍</button>
-                  <button onClick={() => onUpdate(clip.id, rej ? "none" : "rejected")} style={{ width: 42, height: 42, borderRadius: T.radius.md, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", border: rej ? `1px solid ${T.redBorder}` : `1px solid ${T.border}`, cursor: "pointer", background: rej ? T.redDim : "rgba(255,255,255,0.04)", color: rej ? T.red : T.textTertiary }}>👎</button>
+                  <button onClick={() => onUpdateClip(project.id, clip.id, ca ? "none" : "approved")} style={{ width: 42, height: 42, borderRadius: T.radius.md, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", border: ca ? `1px solid ${T.greenBorder}` : `1px solid ${T.border}`, cursor: "pointer", background: ca ? T.greenDim : "rgba(255,255,255,0.04)", color: ca ? T.green : T.textTertiary }}>{"\ud83d\udc4d"}</button>
+                  <button onClick={() => onUpdateClip(project.id, clip.id, rej ? "none" : "rejected")} style={{ width: 42, height: 42, borderRadius: T.radius.md, fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center", border: rej ? `1px solid ${T.redBorder}` : `1px solid ${T.border}`, cursor: "pointer", background: rej ? T.redDim : "rgba(255,255,255,0.04)", color: rej ? T.red : T.textTertiary }}>{"\ud83d\udc4e"}</button>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <span style={{ color: T.textTertiary, fontSize: 13, fontFamily: T.mono }}>{clip.duration}s</span>
-                <ViralBar score={clip.viralScore} />
+                {clip.viralScore > 0 && <ViralBar score={clip.viralScore} />}
               </div>
               {!rej && (
                 <div style={{ display: "flex", gap: 8, paddingTop: 14, borderTop: `1px solid ${T.border}`, marginTop: 14 }}>
-                  <button onClick={() => onTranscript(clip)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font }}>📝 Transcript</button>
-                  {ca && <Badge color={T.green}>✓ Queued</Badge>}
+                  <button onClick={() => onTranscript(clip)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font }}>{"\ud83d\udcdd"} Transcript</button>
+                  {ca && <Badge color={T.green}>{"\u2713"} Queued</Badge>}
                 </div>
               )}
             </Card>
           );
         })}
+        {filtered.length === 0 && (
+          <Card style={{ padding: 40, textAlign: "center" }}>
+            <div style={{ color: T.textTertiary, fontSize: 14 }}>No clips match this filter.</div>
+          </Card>
+        )}
       </div>
     </div>
   );

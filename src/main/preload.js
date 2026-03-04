@@ -38,6 +38,19 @@ contextBridge.exposeInMainWorld("clipflow", {
   storeSet: (key, value) => ipcRenderer.invoke("store:set", key, value),
   storeGetAll: () => ipcRenderer.invoke("store:getAll"),
 
+  // R2 Upload
+  r2Upload: (filePath, fileName) => ipcRenderer.invoke("r2:upload", filePath, fileName),
+  onUploadProgress: (callback) => {
+    ipcRenderer.on("r2:uploadProgress", (_, data) => callback(data));
+  },
+  removeUploadProgressListener: () => {
+    ipcRenderer.removeAllListeners("r2:uploadProgress");
+  },
+
+  // Vizard AI
+  vizardCreateProject: (videoUrl, projectName) => ipcRenderer.invoke("vizard:createProject", videoUrl, projectName),
+  vizardQueryProject: (projectId) => ipcRenderer.invoke("vizard:queryProject", projectId),
+
   // Platform info
   platform: process.platform,
 });

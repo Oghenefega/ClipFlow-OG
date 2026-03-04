@@ -1,8 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const https = require("https");
 const chokidar = require("chokidar");
 const Store = require("electron-store");
+const { S3Client } = require("@aws-sdk/client-s3");
+const { Upload } = require("@aws-sdk/lib-storage");
 
 const store = new Store({
   name: "clipflow-settings",
@@ -43,6 +46,15 @@ const store = new Store({
       facebook: "{title} #{gametitle} #gaming #fbreels #fega",
     },
     ytDescriptions: {},
+    r2Config: {
+      accountId: "7ab477fd14aaed32f78f97a6021ab7cd",
+      accessKeyId: "13371b76c6ddfbe1a5136868f77cdc98",
+      secretAccessKey: "ea5ee330a6e884b94f60280bea10d527e61909d8e2da1b57a123767774b5b67b",
+      bucketName: "clipflow-recordings",
+      publicBaseUrl: "https://pub-94cc07e4ab044421b3884d6c817e45e0.r2.dev",
+    },
+    vizardApiKey: "f0e33b267b1b4fca9b5082966654fbaf",
+    vizardProjects: [],
     uploadedFiles: {},
   },
 });
@@ -298,4 +310,115 @@ ipcMain.handle("store:set", async (_, key, value) => {
 
 ipcMain.handle("store:getAll", async () => {
   return store.store;
+});
+
+// ============ R2 UPLOAD (Cloudflare R2 via S3 SDK) ============
+ipcMain.handle("r2:upload", async (event, filePath, fileName) => {
+  try {
+    const r2Config = store.get("r2Config");
+    if (!r2Config || !r2Config.accessKeyId) {
+      return { error: "R2 credentials not configured. Go to Settings." };
+    }
+
+    const client = new S3Client({
+      region: "auto",
+      endpoint: `https://${r2Config.accountId}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: r2Config.accessKeyId,
+        secretAccessKey: r2Config.secretAccessKey,
+      },
+    });
+
+    const fileSize = fs.statSync(filePath).size;
+    const fileStream = fs.createReadStream(filePath);
+
+    const upload = new Upload({
+      client,
+      params: {
+        Bucket: r2Config.bucketName,
+        Key: fileName,
+        Body: fileStream,
+        ContentType: fileName.endsWith(".mkv") ? "video/x-matroska" : "video/mp4",
+      },
+      queueSize: 4,
+      partSize: 1024 * 1024 * 10, // 10MB parts
+    });
+
+    upload.on("httpUploadProgress", (progress) => {
+      const pct = Math.round(((progress.loaded || 0) / fileSize) * 100);
+      mainWindow?.webContents.send("r2:uploadProgress", { fileName, progress: pct });
+    });
+
+    await upload.done();
+
+    const publicUrl = `${r2Config.publicBaseUrl}/${encodeURIComponent(fileName)}`;
+    return { success: true, url: publicUrl, fileName };
+  } catch (err) {
+    return { error: err.message, fileName };
+  }
+});
+
+// ============ VIZARD AI API ============
+const vizardRequest = (method, apiPath, apiKey, body) => {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: "elb-api.vizard.ai",
+      path: `/hvizard-server-front/open-api/v1${apiPath}`,
+      method,
+      headers: {
+        "VIZARDAI_API_KEY": apiKey,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error(`Failed to parse Vizard response: ${data.substring(0, 200)}`));
+        }
+      });
+    });
+    req.on("error", reject);
+    if (body) req.write(JSON.stringify(body));
+    req.end();
+  });
+};
+
+ipcMain.handle("vizard:createProject", async (_, videoUrl, projectName) => {
+  try {
+    const apiKey = store.get("vizardApiKey");
+    if (!apiKey) return { error: "Vizard API key not configured. Go to Settings." };
+
+    const result = await vizardRequest("POST", "/project/create", apiKey, {
+      videoUrl,
+      videoType: 1,
+      ext: "mp4",
+      lang: "en",
+      preferLength: [1, 2],
+      ratioOfClip: 1,
+      subtitleSwitch: 1,
+      headlineSwitch: 1,
+      projectName: projectName || "ClipFlow Upload",
+    });
+
+    return result;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("vizard:queryProject", async (_, projectId) => {
+  try {
+    const apiKey = store.get("vizardApiKey");
+    if (!apiKey) return { error: "Vizard API key not configured." };
+
+    const result = await vizardRequest("GET", `/project/query/${projectId}`, apiKey);
+    return result;
+  } catch (err) {
+    return { error: err.message };
+  }
 });

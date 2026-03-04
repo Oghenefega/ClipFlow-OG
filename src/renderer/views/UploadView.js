@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import T from "../styles/theme";
-import { Card, PageHeader, PrimaryButton, Checkbox, SectionLabel, InfoBanner } from "../components/shared";
+import { Card, PageHeader, PrimaryButton, Checkbox, SectionLabel } from "../components/shared";
 
 const RENAMED_PATTERN = /^\d{4}-\d{2}-\d{2}\s+\S+\s+Day\d+\s+Pt\d+\.(mp4|mkv)$/i;
 
@@ -20,27 +20,17 @@ const monthLabel = (folder) => {
   return date.toLocaleString("en-US", { month: "long", year: "numeric" });
 };
 
-export default function UploadView({ watchFolder, gamesDb = [] }) {
+export default function UploadView({ watchFolder, gamesDb = [], onCreateProject, uploadedFiles = {}, setUploadedFiles }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState({});
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState({});
-  const [done, setDone] = useState({});
-  const [uploadedFiles, setUploadedFiles] = useState({});
+  const [uploadStatus, setUploadStatus] = useState({}); // per-index: uploading | uploaded | vizard-creating | vizard-done | error
+  const [errors, setErrors] = useState({});
   const [collapsed, setCollapsed] = useState({});
 
-  useEffect(() => {
-    const loadUploaded = async () => {
-      if (!window.clipflow?.storeGet) return;
-      try {
-        const saved = await window.clipflow.storeGet("uploadedFiles");
-        if (saved && typeof saved === "object") setUploadedFiles(saved);
-      } catch (e) { /* ignore */ }
-    };
-    loadUploaded();
-  }, []);
-
+  // Scan watch folder for renamed files
   useEffect(() => {
     const scan = async () => {
       if (!window.clipflow || !watchFolder) { setLoading(false); return; }
@@ -66,7 +56,7 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
             } catch (e) { /* skip */ }
           }
         }
-        // Sort oldest first (ascending by date)
+        // Sort oldest first
         all.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
         setFiles(all);
       } catch (e) { console.error("Failed to scan watch folder:", e); }
@@ -75,37 +65,100 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
     scan();
   }, [watchFolder]);
 
-  const toggle = (i) => { if (done[i]) return; setSelected((p) => ({ ...p, [i]: !p[i] })); };
-  const selCount = Object.keys(selected).filter((k) => selected[k] && !done[k]).length;
+  // Listen for R2 upload progress events
+  useEffect(() => {
+    if (!window.clipflow?.onUploadProgress) return;
+    const handler = (data) => {
+      setProgress((p) => ({ ...p, [data.fileName]: data.progress }));
+    };
+    window.clipflow.onUploadProgress(handler);
+    return () => {
+      if (window.clipflow?.removeUploadProgressListener) {
+        window.clipflow.removeUploadProgressListener();
+      }
+    };
+  }, []);
 
-  const upload = () => {
-    if (selCount === 0) return;
-    setUploading(true);
-    Object.keys(selected).filter((k) => selected[k] && !done[k]).forEach((idx) => {
-      const i = parseInt(idx);
-      let p = 0;
-      const iv = setInterval(() => {
-        p += Math.random() * 12 + 4;
-        if (p >= 100) {
-          clearInterval(iv);
-          setDone((pr) => ({ ...pr, [i]: true }));
-          const fileName = files[i]?.name;
-          if (fileName) {
-            setUploadedFiles((prev) => {
-              const next = { ...prev, [fileName]: Date.now() };
-              if (window.clipflow?.storeSet) window.clipflow.storeSet("uploadedFiles", next);
-              return next;
-            });
-          }
-          p = 100;
-        }
-        setProgress((pr) => ({ ...pr, [i]: Math.min(p, 100) }));
-      }, 350 + i * 150);
-    });
+  const isFileDone = (i) => {
+    const status = uploadStatus[i];
+    return status === "uploaded" || status === "vizard-done" || status === "vizard-creating";
   };
 
-  const batchDone = Object.keys(selected).filter((k) => selected[k]).length > 0 && Object.keys(selected).filter((k) => selected[k]).every((k) => done[k]);
-  useEffect(() => { if (batchDone) setUploading(false); }, [batchDone]);
+  const toggle = (i) => {
+    if (isFileDone(i) || uploadedFiles[files[i]?.name]) return;
+    setSelected((p) => ({ ...p, [i]: !p[i] }));
+  };
+
+  const selCount = Object.keys(selected).filter((k) => selected[k] && !isFileDone(parseInt(k)) && !uploadedFiles[files[parseInt(k)]?.name]).length;
+
+  const upload = async () => {
+    if (selCount === 0 || uploading) return;
+    setUploading(true);
+
+    const toUpload = Object.keys(selected)
+      .filter((k) => selected[k] && !isFileDone(parseInt(k)) && !uploadedFiles[files[parseInt(k)]?.name])
+      .map((k) => parseInt(k));
+
+    for (const idx of toUpload) {
+      const file = files[idx];
+      if (!file) continue;
+
+      // Phase 1: Upload to R2
+      setUploadStatus((p) => ({ ...p, [idx]: "uploading" }));
+      setProgress((p) => ({ ...p, [file.name]: 0 }));
+
+      const result = await window.clipflow.r2Upload(file.path, file.name);
+
+      if (result.error) {
+        setUploadStatus((p) => ({ ...p, [idx]: "error" }));
+        setErrors((p) => ({ ...p, [idx]: result.error }));
+        continue;
+      }
+
+      // Mark as uploaded in persistent store
+      if (setUploadedFiles) {
+        setUploadedFiles((prev) => {
+          const next = { ...prev, [file.name]: { uploadedAt: Date.now(), url: result.url } };
+          if (window.clipflow?.storeSet) window.clipflow.storeSet("uploadedFiles", next);
+          return next;
+        });
+      }
+      setUploadStatus((p) => ({ ...p, [idx]: "uploaded" }));
+
+      // Phase 2: Create Vizard project
+      setUploadStatus((p) => ({ ...p, [idx]: "vizard-creating" }));
+      const projectName = file.name.replace(/\.(mp4|mkv)$/i, "");
+      const vizResult = await window.clipflow.vizardCreateProject(result.url, projectName);
+
+      if (vizResult.error || (vizResult.code && vizResult.code !== 200 && vizResult.code !== 1000)) {
+        // R2 upload succeeded, just Vizard failed
+        setUploadStatus((p) => ({ ...p, [idx]: "uploaded" }));
+        setErrors((p) => ({ ...p, [idx]: `Vizard: ${vizResult.error || vizResult.msg || "Unknown error"}` }));
+      } else {
+        setUploadStatus((p) => ({ ...p, [idx]: "vizard-done" }));
+        // Save the project to App state
+        if (onCreateProject && vizResult.data) {
+          const tag = getGameFromName(file.name);
+          const game = gamesDb.find((g) => g.tag === tag);
+          onCreateProject({
+            id: String(vizResult.data.projectId || vizResult.data.id || Date.now()),
+            name: projectName,
+            fileName: file.name,
+            videoUrl: result.url,
+            status: "processing",
+            progress: 0,
+            clips: [],
+            createdAt: new Date().toISOString(),
+            game: game?.name || tag || "Unknown",
+            gameTag: tag,
+            gameColor: game?.color || T.accent,
+          });
+        }
+      }
+    }
+
+    setUploading(false);
+  };
 
   const getGameFromName = (name) => { const m = name.match(/^\d{4}-\d{2}-\d{2}\s+(\S+)\s+Day/); return m ? m[1] : ""; };
   const getGameColor = (tag) => { const g = gamesDb.find((x) => x.tag === tag); return g ? g.color : T.accent; };
@@ -124,19 +177,21 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
   const toggleCollapse = (folder) => setCollapsed((p) => ({ ...p, [folder]: !p[folder] }));
   const selectAllInFolder = (folder) => {
     const items = grouped[folder];
-    const allSel = items.every((item) => selected[item.index]);
+    const selectable = items.filter((item) => !isFileDone(item.index) && !uploadedFiles[item.file.name]);
+    const allSel = selectable.length > 0 && selectable.every((item) => selected[item.index]);
     const u = {};
-    items.forEach((item) => { if (!done[item.index]) u[item.index] = !allSel; });
+    selectable.forEach((item) => { u[item.index] = !allSel; });
     setSelected((p) => ({ ...p, ...u }));
   };
 
-  // Responsive pill width — smaller min allows more columns when wide
   const PILL_W = 200;
+
+  // Count stats
+  const totalUploaded = files.filter((f) => uploadedFiles[f.name]).length;
 
   return (
     <div>
       <PageHeader title="Upload & Clip" subtitle={"Renamed recordings \u2192 R2 \u2192 Vizard AI"} />
-      <InfoBanner icon={"\ud83d\udea7"} color={T.yellow}>R2 upload integration coming soon. Upload button is a placeholder.</InfoBanner>
 
       <div style={{ marginTop: 16 }}>
         {loading ? (
@@ -150,8 +205,8 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
         ) : (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <SectionLabel>{files.length} renamed file{files.length !== 1 ? "s" : ""}</SectionLabel>
-              <button onClick={() => { const u = {}; files.forEach((_, i) => { if (!done[i]) u[i] = true; }); setSelected((p) => ({ ...p, ...u })); }} style={{ background: "none", border: "none", color: T.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 }}>Select All</button>
+              <SectionLabel>{files.length} renamed file{files.length !== 1 ? "s" : ""}{totalUploaded > 0 ? ` \u00b7 ${totalUploaded} uploaded` : ""}</SectionLabel>
+              <button onClick={() => { const u = {}; files.forEach((f, i) => { if (!isFileDone(i) && !uploadedFiles[f.name]) u[i] = true; }); setSelected((p) => ({ ...p, ...u })); }} style={{ background: "none", border: "none", color: T.accent, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 }}>Select All</button>
             </div>
 
             {folderKeys.map((folder) => {
@@ -174,7 +229,7 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
                     {folderUploadedCount > 0 && <span style={{ color: T.green, fontSize: 11, fontWeight: 700 }}>{folderUploadedCount} uploaded</span>}
                     {folderSelCount > 0 && <span style={{ color: T.accent, fontSize: 11, fontWeight: 700 }}>{folderSelCount} selected</span>}
                     <button onClick={(e) => { e.stopPropagation(); selectAllInFolder(folder); }} style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", color: T.textSecondary, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: T.font }}>
-                      {items.every((item) => selected[item.index]) ? "Deselect" : "Select All"}
+                      {items.filter((item) => !isFileDone(item.index) && !uploadedFiles[item.file.name]).length > 0 && items.filter((item) => !isFileDone(item.index) && !uploadedFiles[item.file.name]).every((item) => selected[item.index]) ? "Deselect" : "Select All"}
                     </button>
                   </div>
 
@@ -182,57 +237,73 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
                   {!isCollapsed && (
                     <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${PILL_W}px, 1fr))`, gap: 6 }}>
                       {items.map(({ file: f, index: i }) => {
-                        const isDone = done[i];
+                        const status = uploadStatus[i];
                         const isSel = selected[i];
-                        const isUp = uploading && isSel && !isDone;
                         const tag = getGameFromName(f.name);
                         const tagColor = getGameColor(tag);
                         const wasUploaded = uploadedFiles[f.name];
+                        const isDone = isFileDone(i) || !!wasUploaded;
+                        const isUp = status === "uploading";
+                        const isError = status === "error";
+                        const prog = progress[f.name] || 0;
 
                         return (
                           <div
                             key={i}
                             onClick={() => toggle(i)}
+                            title={isError ? errors[i] : undefined}
                             style={{
                               display: "flex",
                               alignItems: "center",
                               gap: 6,
                               padding: "7px 10px",
                               borderRadius: T.radius.md,
-                              border: `1px solid ${isDone ? T.greenBorder : isSel ? T.accentBorder : T.border}`,
-                              background: isDone ? "rgba(52,211,153,0.06)" : isSel ? T.accentDim : T.surface,
+                              border: `1px solid ${isDone ? T.greenBorder : isError ? T.redBorder : isSel ? T.accentBorder : T.border}`,
+                              background: isDone ? "rgba(52,211,153,0.06)" : isError ? "rgba(248,113,113,0.06)" : isSel ? T.accentDim : T.surface,
                               cursor: isDone ? "default" : "pointer",
                               overflow: "hidden",
+                              position: "relative",
                             }}
                           >
-                            <Checkbox checked={!!isSel || isDone} size={16} />
-                            {tag && (
-                              <span style={{
-                                display: "inline-flex",
-                                padding: "2px 5px",
-                                background: `${tagColor}18`,
-                                border: `1px solid ${tagColor}44`,
-                                borderRadius: 4,
-                                fontSize: 9,
-                                fontWeight: 700,
-                                color: tagColor,
-                                fontFamily: T.mono,
-                                letterSpacing: "0.5px",
-                                flexShrink: 0,
-                              }}>
-                                {tag}
-                              </span>
-                            )}
-                            <span style={{ color: T.text, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{shortName(f.name)}</span>
-                            <span style={{ color: T.textTertiary, fontSize: 10, fontFamily: T.mono, flexShrink: 0 }}>{formatSize(f.size)}</span>
-                            {(wasUploaded || isDone) && (
-                              <span style={{ padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, textTransform: "uppercase", color: T.green, background: T.greenDim, flexShrink: 0 }}>
-                                {"✓"}
-                              </span>
-                            )}
+                            {/* Progress bar background */}
                             {isUp && (
-                              <span style={{ color: T.accentLight, fontSize: 10, fontWeight: 700, fontFamily: T.mono, flexShrink: 0 }}>{Math.round(progress[i] || 0)}%</span>
+                              <div style={{
+                                position: "absolute", left: 0, top: 0, bottom: 0,
+                                width: `${prog}%`,
+                                background: "rgba(139,92,246,0.12)",
+                                transition: "width 0.3s",
+                                zIndex: 0,
+                              }} />
                             )}
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, overflow: "hidden", zIndex: 1 }}>
+                              <Checkbox checked={!!isSel || isDone} size={16} />
+                              {tag && (
+                                <span style={{
+                                  display: "inline-flex", padding: "2px 5px",
+                                  background: `${tagColor}18`, border: `1px solid ${tagColor}44`,
+                                  borderRadius: 4, fontSize: 9, fontWeight: 700, color: tagColor,
+                                  fontFamily: T.mono, letterSpacing: "0.5px", flexShrink: 0,
+                                }}>
+                                  {tag}
+                                </span>
+                              )}
+                              <span style={{ color: T.text, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{shortName(f.name)}</span>
+                              <span style={{ color: T.textTertiary, fontSize: 10, fontFamily: T.mono, flexShrink: 0 }}>{formatSize(f.size)}</span>
+                              {isUp && (
+                                <span style={{ color: T.accentLight, fontSize: 10, fontWeight: 700, fontFamily: T.mono, flexShrink: 0 }}>{prog}%</span>
+                              )}
+                              {status === "vizard-creating" && (
+                                <span style={{ padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, color: T.yellow, background: T.yellowDim, flexShrink: 0 }}>VIZARD</span>
+                              )}
+                              {isDone && !isUp && status !== "vizard-creating" && (
+                                <span style={{ padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, textTransform: "uppercase", color: T.green, background: T.greenDim, flexShrink: 0 }}>
+                                  {"\u2713"}
+                                </span>
+                              )}
+                              {isError && (
+                                <span style={{ padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, color: T.red, background: T.redDim, flexShrink: 0 }}>ERR</span>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -243,8 +314,8 @@ export default function UploadView({ watchFolder, gamesDb = [] }) {
             })}
 
             <div style={{ marginTop: 16 }}>
-              <PrimaryButton onClick={upload} disabled={selCount === 0}>
-                {selCount > 0 ? `Upload ${selCount} File${selCount > 1 ? "s" : ""}` : Object.values(done).some(Boolean) ? "All selected uploaded \u2705" : "Select Files"}
+              <PrimaryButton onClick={upload} disabled={selCount === 0 || uploading}>
+                {uploading ? "Uploading..." : selCount > 0 ? `Upload ${selCount} File${selCount > 1 ? "s" : ""} to R2` : "Select Files"}
               </PrimaryButton>
             </div>
           </>

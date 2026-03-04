@@ -3,7 +3,7 @@ import T from "../styles/theme";
 import { Card, PageHeader, SectionLabel, GamePill, PulseDot, InfoBanner } from "../components/shared";
 import { GameEditModal } from "../components/modals";
 
-export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, ignoredProcesses, setIgnoredProcesses, platforms, setPlatforms }) {
+export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, ignoredProcesses, setIgnoredProcesses, platforms, setPlatforms, r2Config, setR2Config, vizardApiKey, setVizardApiKey, onResetUploads }) {
   const [editFolder, setEditFolder] = useState(false);
   const [folderVal, setFolderVal] = useState(watchFolder);
   const [editIgn, setEditIgn] = useState(false);
@@ -11,6 +11,11 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
   const [editGD, setEditGD] = useState(null);
   const [showAddMain, setShowAddMain] = useState(false);
   const [selGameLib, setSelGameLib] = useState(null);
+  const [editR2, setEditR2] = useState(false);
+  const [r2Vals, setR2Vals] = useState(r2Config || {});
+  const [editVizard, setEditVizard] = useState(false);
+  const [vizVal, setVizVal] = useState(vizardApiKey || "");
+  const [resetConfirm, setResetConfirm] = useState(false);
 
   const browseFolder = async () => {
     if (!window.clipflow?.pickFolder) return;
@@ -24,6 +29,11 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
   const rmMain = (name) => setMainPool((p) => p.filter((n) => n !== name));
   const delGame = (name) => { setGamesDb((p) => p.filter((g) => g.name !== name)); setMainPool((p) => p.filter((n) => n !== name)); };
   const nonPool = gamesDb.filter((g) => !mainPool.includes(g.name));
+
+  const maskKey = (key) => {
+    if (!key || key.length < 8) return key || "";
+    return key.substring(0, 4) + "••••" + key.substring(key.length - 4);
+  };
 
   return (
     <div>
@@ -66,7 +76,7 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
               <div key={name} onClick={() => setMainGame(name)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: T.radius.md, border: `1px solid ${mainGame === name ? T.accentBorder : T.border}`, background: mainGame === name ? T.accentDim : "transparent", cursor: "pointer" }}>
                 <GamePill tag={g.tag} color={g.color} size="sm" />
                 <span style={{ color: mainGame === name ? T.accentLight : T.textSecondary, fontSize: 13, fontWeight: mainGame === name ? 700 : 500 }}>{name}</span>
-                <button onClick={(e) => { e.stopPropagation(); rmMain(name); }} style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", padding: "0 0 0 4px", lineHeight: 1 }}>✕</button>
+                <button onClick={(e) => { e.stopPropagation(); rmMain(name); }} style={{ background: "none", border: "none", color: T.textMuted, fontSize: 12, cursor: "pointer", padding: "0 0 0 4px", lineHeight: 1 }}>{"\u2715"}</button>
               </div>
             );
           })}
@@ -113,6 +123,91 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         </div>
       </Card>
 
+      {/* R2 Configuration */}
+      <Card style={{ padding: 24, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Cloudflare R2</div>
+          {!editR2 ? (
+            <button onClick={() => { setEditR2(true); setR2Vals(r2Config || {}); }} style={{ padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>Edit</button>
+          ) : (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setEditR2(false)} style={{ padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>Cancel</button>
+              <button onClick={() => { setR2Config(r2Vals); setEditR2(false); }} style={{ padding: "6px 12px", borderRadius: 6, background: T.green, border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save</button>
+            </div>
+          )}
+        </div>
+        {editR2 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[
+              { key: "accountId", label: "Account ID" },
+              { key: "accessKeyId", label: "Access Key ID" },
+              { key: "secretAccessKey", label: "Secret Access Key" },
+              { key: "bucketName", label: "Bucket Name" },
+              { key: "publicBaseUrl", label: "Public Base URL" },
+            ].map((field) => (
+              <div key={field.key}>
+                <SectionLabel>{field.label}</SectionLabel>
+                <input
+                  value={r2Vals[field.key] || ""}
+                  onChange={(e) => setR2Vals((p) => ({ ...p, [field.key]: e.target.value }))}
+                  type={field.key.toLowerCase().includes("secret") ? "password" : "text"}
+                  style={{ width: "100%", background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "10px 14px", color: T.text, fontSize: 13, fontFamily: T.mono, outline: "none", boxSizing: "border-box", marginTop: 6 }}
+                />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>Bucket</span>
+              <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono }}>{r2Config?.bucketName || "Not set"}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>Access Key</span>
+              <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono }}>{maskKey(r2Config?.accessKeyId)}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>Status</span>
+              <PulseDot color={r2Config?.accessKeyId ? T.green : T.red} size={6} />
+              <span style={{ color: r2Config?.accessKeyId ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{r2Config?.accessKeyId ? "Configured" : "Not configured"}</span>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Vizard API */}
+      <Card style={{ padding: 24, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Vizard AI</div>
+          {!editVizard ? (
+            <button onClick={() => { setEditVizard(true); setVizVal(vizardApiKey || ""); }} style={{ padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>Edit</button>
+          ) : (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setEditVizard(false)} style={{ padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>Cancel</button>
+              <button onClick={() => { setVizardApiKey(vizVal); setEditVizard(false); }} style={{ padding: "6px 12px", borderRadius: 6, background: T.green, border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save</button>
+            </div>
+          )}
+        </div>
+        {editVizard ? (
+          <div>
+            <SectionLabel>API Key</SectionLabel>
+            <input
+              value={vizVal}
+              onChange={(e) => setVizVal(e.target.value)}
+              type="password"
+              style={{ width: "100%", background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "10px 14px", color: T.text, fontSize: 13, fontFamily: T.mono, outline: "none", boxSizing: "border-box", marginTop: 6 }}
+            />
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>API Key</span>
+            <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono }}>{maskKey(vizardApiKey)}</span>
+            <PulseDot color={vizardApiKey ? T.green : T.red} size={6} />
+            <span style={{ color: vizardApiKey ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{vizardApiKey ? "Configured" : "Not set"}</span>
+          </div>
+        )}
+      </Card>
+
       {/* Ignored Processes */}
       <Card style={{ padding: 24, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -138,10 +233,27 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         )}
       </Card>
 
+      {/* Upload History / Reset */}
+      <Card style={{ padding: 24, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Upload History</div>
+          {!resetConfirm ? (
+            <button onClick={() => setResetConfirm(true)} style={{ padding: "6px 12px", borderRadius: 6, background: T.redDim, border: `1px solid ${T.redBorder}`, color: T.red, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Reset Uploads</button>
+          ) : (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ color: T.red, fontSize: 12 }}>Are you sure?</span>
+              <button onClick={() => setResetConfirm(false)} style={{ padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, fontSize: 12, cursor: "pointer", fontFamily: T.font }}>No</button>
+              <button onClick={() => { if (onResetUploads) onResetUploads(); setResetConfirm(false); }} style={{ padding: "6px 12px", borderRadius: 6, background: T.red, border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Yes, Reset</button>
+            </div>
+          )}
+        </div>
+        <p style={{ color: T.textTertiary, fontSize: 12, margin: 0 }}>Clear the record of which files have been uploaded. This will not delete files from R2.</p>
+      </Card>
+
       {/* Downloads — empty until Vizard integration */}
       <Card style={{ padding: 24 }}>
         <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Downloads</div>
-        <InfoBanner icon="🔗" color={T.accent}>Vizard clip downloads will appear here once API integration is complete.</InfoBanner>
+        <InfoBanner icon={"\ud83d\udd17"} color={T.accent}>Vizard clip downloads will appear here once API integration is complete.</InfoBanner>
       </Card>
 
       {editGD && <GameEditModal game={editGD} onSave={(g) => { onEditGame(g); setEditGD(null); }} onClose={() => setEditGD(null)} />}

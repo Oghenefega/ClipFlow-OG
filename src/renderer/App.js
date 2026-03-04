@@ -66,24 +66,6 @@ const MOCK_MANAGED = [
   { id: "m3", name: "2026-02-04 AR Day19 Pt3.mp4", tag: "AR", game: "Arc Raiders", color: "#ff6b35", day: 19, part: 3, folder: "2026-02", createdAt: "2026-02-04T18:00:00" },
   { id: "m4", name: "2026-02-05 AR Day20 Pt1.mp4", tag: "AR", game: "Arc Raiders", color: "#ff6b35", day: 20, part: 1, folder: "2026-02", createdAt: "2026-02-05T17:00:00" },
 ];
-const MOCK_CLIPS = {
-  p1: [
-    { id: "c1", title: "The Shoot First Strategy Paid Off! #arcraiders", viralScore: 10, duration: 42, transcript: "Think first, shoot later...", status: "none", game: "Arc Raiders" },
-    { id: "c2", title: "I Lost 12 Games of Chess in One Night... #arcraiders", viralScore: 7.9, duration: 31, transcript: "Let's go...", status: "approved", game: "Arc Raiders" },
-    { id: "c3", title: "The Ammo Heist That Changed Everything #arcraiders", viralScore: 8.4, duration: 38, transcript: "Alright...", status: "approved", game: "Arc Raiders" },
-    { id: "c4", title: "When Your Teammate Steals Your Loot #arcraiders", viralScore: 8.7, duration: 35, transcript: "Yo cover me...", status: "none", game: "Arc Raiders" },
-    { id: "c5", title: "untitled clip", viralScore: 6.1, duration: 38, transcript: "Walking...", status: "rejected", game: "Arc Raiders" },
-  ],
-  p2: [
-    { id: "c6", title: "NO WAY That Grenade Worked #arcraiders", viralScore: 9.0, duration: 37, transcript: "No way...", status: "approved", game: "Arc Raiders" },
-    { id: "c7", title: "The Panic Extract #arcraiders", viralScore: 8.6, duration: 31, transcript: "THEY'RE...", status: "none", game: "Arc Raiders" },
-    { id: "c8", title: "betrayed by my own teammate #arcraiders", viralScore: 8.3, duration: 45, transcript: "Bro...", status: "none", game: "Arc Raiders" },
-  ],
-  p3: [
-    { id: "c9", title: "calculated. #rocketleague", viralScore: 8.9, duration: 28, transcript: "BOOM!", status: "approved", game: "Rocket League" },
-    { id: "c10", title: "my own goal was so bad #rocketleague", viralScore: 8.5, duration: 33, transcript: "Easy...", status: "none", game: "Rocket League" },
-  ],
-};
 
 // ============ PERSIST HELPER ============
 const persist = (key, value) => {
@@ -107,8 +89,13 @@ export default function App() {
   const [renameHistory, setRenameHistory] = useState(MOCK_HISTORY);
   const [managedFiles, setManagedFiles] = useState(MOCK_MANAGED);
 
-  // Projects / Clips
-  const [clips, setClips] = useState(MOCK_CLIPS);
+  // Upload tracking
+  const [uploadedFiles, setUploadedFiles] = useState({});
+
+  // Vizard Projects (real data)
+  const [vizardProjects, setVizardProjects] = useState([]);
+
+  // Transcript modal
   const [transcript, setTranscript] = useState(null);
 
   // Add Game modal
@@ -119,6 +106,8 @@ export default function App() {
   const [ignoredProcesses, setIgnoredProcesses] = useState(INITIAL_IGNORED);
   const [watchFolder, setWatchFolder] = useState("W:\\YouTube Gaming Recordings Onward\\Vertical Recordings Onwards");
   const [platforms, setPlatforms] = useState(PUBLISH_ORDER_INIT);
+  const [r2Config, setR2Config] = useState({});
+  const [vizardApiKey, setVizardApiKey] = useState("");
 
   // Queue / Tracker
   const [weeklyTemplate, setWeeklyTemplate] = useState(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
@@ -147,6 +136,10 @@ export default function App() {
         if (all.weeklyTemplate) setWeeklyTemplate(all.weeklyTemplate);
         if (all.trackerData) setTrackerData(all.trackerData);
         if (all.captionTemplates) setCaptionTemplates(all.captionTemplates);
+        if (all.r2Config) setR2Config(all.r2Config);
+        if (all.vizardApiKey) setVizardApiKey(all.vizardApiKey);
+        if (all.vizardProjects) setVizardProjects(all.vizardProjects);
+        if (all.uploadedFiles) setUploadedFiles(all.uploadedFiles);
         // For ytDescriptions: merge real defaults with any saved overrides
         if (all.ytDescriptions && Object.keys(all.ytDescriptions).length > 0) {
           setYtDescriptions({ ...REAL_YT_DESCRIPTIONS, ...all.ytDescriptions });
@@ -160,51 +153,26 @@ export default function App() {
   }, []);
 
   // ============ AUTO-SAVE TO ELECTRON-STORE ============
-  // Use a ref to track if we've loaded, to avoid saving defaults on first render
   const hasLoaded = useRef(false);
   useEffect(() => {
     if (!loaded) return;
     if (!hasLoaded.current) { hasLoaded.current = true; return; }
     persist("watchFolder", watchFolder);
   }, [watchFolder, loaded]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("mainGame", mainGame);
-  }, [mainGame]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("mainPool", mainPool);
-  }, [mainPool]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("gamesDb", gamesDb);
-  }, [gamesDb]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("ignoredProcesses", ignoredProcesses);
-  }, [ignoredProcesses]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("platforms", platforms);
-  }, [platforms]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("weeklyTemplate", weeklyTemplate);
-  }, [weeklyTemplate]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("trackerData", trackerData);
-  }, [trackerData]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("captionTemplates", captionTemplates);
-  }, [captionTemplates]);
-  useEffect(() => {
-    if (!hasLoaded.current) return;
-    persist("ytDescriptions", ytDescriptions);
-  }, [ytDescriptions]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("mainGame", mainGame); }, [mainGame]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("mainPool", mainPool); }, [mainPool]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("gamesDb", gamesDb); }, [gamesDb]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("ignoredProcesses", ignoredProcesses); }, [ignoredProcesses]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("platforms", platforms); }, [platforms]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("weeklyTemplate", weeklyTemplate); }, [weeklyTemplate]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("trackerData", trackerData); }, [trackerData]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("captionTemplates", captionTemplates); }, [captionTemplates]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("ytDescriptions", ytDescriptions); }, [ytDescriptions]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("r2Config", r2Config); }, [r2Config]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("vizardApiKey", vizardApiKey); }, [vizardApiKey]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("vizardProjects", vizardProjects); }, [vizardProjects]);
 
-  // Handlers
+  // ============ HANDLERS ============
   const handleNewGame = (gd) => {
     setGamesDb((p) => [...p, { ...gd, dayCount: 1 }]);
     setYtDescriptions((p) => ({ ...p, [gd.name]: { desc: `\u{1F534}Live every day 5PM\nFunniest ${gd.name} moments\u{1F602}` } }));
@@ -212,28 +180,99 @@ export default function App() {
     setShowAddGame(false);
   };
   const handleEditGame = (u) => setGamesDb((p) => p.map((g) => (g.name === u.name ? u : g)));
-  const updateClip = (id, status) => setClips((p) => {
-    const n = {};
-    for (const [k, v] of Object.entries(p)) n[k] = v.map((c) => (c.id === id ? { ...c, status } : c));
-    return n;
-  });
-  const editTitle = (id, title) => setClips((p) => {
-    const n = {};
-    for (const [k, v] of Object.entries(p)) n[k] = v.map((c) => (c.id === id ? { ...c, title } : c));
-    return n;
+
+  // Vizard project handlers
+  const handleCreateProject = useCallback((project) => {
+    setVizardProjects((prev) => [...prev, project]);
+  }, []);
+
+  const handlePollProject = useCallback(async (projectId) => {
+    if (!window.clipflow?.vizardQueryProject) return;
+    try {
+      const result = await window.clipflow.vizardQueryProject(projectId);
+      if (result.error) {
+        console.error("Vizard poll error:", result.error);
+        return;
+      }
+
+      if (result.code === 2000 && result.data) {
+        // Project complete — extract clips
+        const videos = result.data.videos || [];
+        const clips = videos.map((v, i) => ({
+          id: `${projectId}-clip-${i}`,
+          title: v.title || "Untitled Clip",
+          videoUrl: v.videoUrl || "",
+          viralScore: v.viralScore || 0,
+          viralReason: v.viralReason || "",
+          duration: Math.round(v.duration || 0),
+          transcript: v.transcript || "",
+          status: "none",
+        }));
+
+        setVizardProjects((prev) => prev.map((p) =>
+          p.id === String(projectId) ? { ...p, status: "ready", clips, progress: 100 } : p
+        ));
+      } else if (result.code === 1000) {
+        // Still processing
+        const prog = result.data?.progress || null;
+        setVizardProjects((prev) => prev.map((p) =>
+          p.id === String(projectId) ? { ...p, progress: prog || p.progress } : p
+        ));
+      } else if (result.code && result.code !== 200) {
+        // Error
+        setVizardProjects((prev) => prev.map((p) =>
+          p.id === String(projectId) ? { ...p, status: "error", error: result.msg || "Unknown error" } : p
+        ));
+      }
+    } catch (e) {
+      console.error("Failed to poll project:", e);
+    }
+  }, []);
+
+  const handleUpdateClip = useCallback((projectId, clipId, status) => {
+    setVizardProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      return {
+        ...p,
+        clips: (p.clips || []).map((c) => (c.id === clipId ? { ...c, status } : c)),
+      };
+    }));
+  }, []);
+
+  const handleEditClipTitle = useCallback((projectId, clipId, title) => {
+    setVizardProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      return {
+        ...p,
+        clips: (p.clips || []).map((c) => (c.id === clipId ? { ...c, title } : c)),
+      };
+    }));
+  }, []);
+
+  const handleResetUploads = useCallback(() => {
+    setUploadedFiles({});
+    persist("uploadedFiles", {});
+  }, []);
+
+  // Build allClips from vizardProjects for QueueView
+  const allClips = {};
+  vizardProjects.forEach((p) => {
+    if (p.clips && p.clips.length > 0) {
+      allClips[p.id] = p.clips;
+    }
   });
 
-  const totalApproved = Object.values(clips).flat().filter((c) => (c.status === "approved" || c.status === "ready") && hasHashtag(c.title)).length;
+  const totalApproved = Object.values(allClips).flat().filter((c) => (c.status === "approved" || c.status === "ready") && hasHashtag(c.title)).length;
 
   const nav = (id) => { setView(id); setSelProj(null); };
 
   const navItems = [
-    { id: "rename", icon: "✏️", label: "Rename" },
-    { id: "upload", icon: "⬆️", label: "Upload" },
-    { id: "projects", icon: "📁", label: "Projects" },
-    { id: "queue", icon: "📋", label: "Queue", badge: totalApproved },
-    { id: "captions", icon: "🏷️", label: "Captions" },
-    { id: "settings", icon: "⚙️", label: "Settings" },
+    { id: "rename", icon: "\u270f\ufe0f", label: "Rename" },
+    { id: "upload", icon: "\u2b06\ufe0f", label: "Upload" },
+    { id: "projects", icon: "\ud83d\udcc1", label: "Projects" },
+    { id: "queue", icon: "\ud83d\udccb", label: "Queue", badge: totalApproved },
+    { id: "captions", icon: "\ud83c\udff7\ufe0f", label: "Captions" },
+    { id: "settings", icon: "\u2699\ufe0f", label: "Settings" },
   ];
 
   const renderView = () => {
@@ -252,11 +291,21 @@ export default function App() {
         />
       );
     }
-    if (view === "upload") return <UploadView watchFolder={watchFolder} gamesDb={gamesDb} />;
+    if (view === "upload") {
+      return (
+        <UploadView
+          watchFolder={watchFolder}
+          gamesDb={gamesDb}
+          onCreateProject={handleCreateProject}
+          uploadedFiles={uploadedFiles}
+          setUploadedFiles={setUploadedFiles}
+        />
+      );
+    }
     if (view === "queue") {
       return (
         <QueueView
-          allClips={clips}
+          allClips={allClips}
           mainGame={mainGame}
           mainGameTag={mainGameTag}
           platforms={platforms}
@@ -293,26 +342,46 @@ export default function App() {
           setIgnoredProcesses={setIgnoredProcesses}
           platforms={platforms}
           setPlatforms={setPlatforms}
+          r2Config={r2Config}
+          setR2Config={setR2Config}
+          vizardApiKey={vizardApiKey}
+          setVizardApiKey={setVizardApiKey}
+          onResetUploads={handleResetUploads}
         />
       );
     }
-    if (selProj && clips[selProj.id]) {
+    // Projects / Clips view
+    if (view === "clips" && selProj) {
+      const proj = vizardProjects.find((p) => p.id === selProj.id);
+      if (!proj) {
+        // Project not found, fall back to list
+        return (
+          <ProjectsListView
+            vizardProjects={vizardProjects}
+            onSelect={(p) => { setSelProj(p); setView("clips"); }}
+            onPollProject={handlePollProject}
+            mainGame={mainGame}
+            gamesDb={gamesDb}
+          />
+        );
+      }
       return (
         <ClipBrowser
-          project={selProj}
-          clips={clips[selProj.id]}
+          project={proj}
           onBack={() => { setSelProj(null); setView("projects"); }}
-          onUpdate={updateClip}
+          onUpdateClip={handleUpdateClip}
           onTranscript={setTranscript}
-          onEditTitle={editTitle}
+          onEditClipTitle={handleEditClipTitle}
         />
       );
     }
     return (
       <ProjectsListView
+        vizardProjects={vizardProjects}
         onSelect={(p) => { setSelProj(p); setView("clips"); }}
-        clips={clips}
+        onPollProject={handlePollProject}
         mainGame={mainGame}
+        gamesDb={gamesDb}
       />
     );
   };
