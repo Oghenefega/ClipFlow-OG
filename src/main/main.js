@@ -1,3 +1,4 @@
+require("dotenv").config();
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
@@ -47,13 +48,13 @@ const store = new Store({
     },
     ytDescriptions: {},
     r2Config: {
-      accountId: "7ab477fd14aaed32f78f97a6021ab7cd",
-      accessKeyId: "13371b76c6ddfbe1a5136868f77cdc98",
-      secretAccessKey: "ea5ee330a6e884b94f60280bea10d527e61909d8e2da1b57a123767774b5b67b",
-      bucketName: "clipflow-recordings",
-      publicBaseUrl: "https://pub-94cc07e4ab044421b3884d6c817e45e0.r2.dev",
+      accountId: process.env.R2_ACCOUNT_ID || "",
+      accessKeyId: process.env.R2_ACCESS_KEY_ID || "",
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || "",
+      bucketName: process.env.R2_BUCKET_NAME || "",
+      publicBaseUrl: process.env.R2_PUBLIC_BASE_URL || "",
     },
-    vizardApiKey: "f0e33b267b1b4fca9b5082966654fbaf",
+    vizardApiKey: process.env.VIZARD_API_KEY || "",
     vizardProjects: [],
     uploadedFiles: {},
     renameHistory: [],
