@@ -541,3 +541,36 @@ ipcMain.handle("vizard:generateCaption", async (_, options) => {
     return { error: err.message };
   }
 });
+
+// ============ DOWNLOADS ============
+ipcMain.handle("download:clip", async (event, url, savePath) => {
+  return new Promise((resolve) => {
+    try {
+      const file = fs.createWriteStream(savePath);
+      const makeRequest = (requestUrl) => {
+        const proto = requestUrl.startsWith("https") ? https : require("http");
+        proto.get(requestUrl, (response) => {
+          if (response.statusCode === 301 || response.statusCode === 302) {
+            file.close();
+            try { fs.unlinkSync(savePath); } catch(_){}
+            makeRequest(response.headers.location);
+            return;
+          }
+          const total = parseInt(response.headers["content-length"], 10) || 0;
+          let downloaded = 0;
+          response.on("data", (chunk) => {
+            downloaded += chunk.length;
+            if (total > 0) {
+              event.sender.send("download:progress", { url, progress: Math.round((downloaded / total) * 100) });
+            }
+          });
+          response.pipe(file);
+          file.on("finish", () => { file.close(); resolve({ success: true, path: savePath }); });
+        }).on("error", (err) => { file.close(); try { fs.unlinkSync(savePath); } catch(_){} resolve({ error: err.message }); });
+      };
+      makeRequest(url);
+    } catch (err) {
+      resolve({ error: err.message });
+    }
+  });
+});

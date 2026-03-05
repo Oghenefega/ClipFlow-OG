@@ -347,8 +347,11 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <GamePill tag={r.tag} color={r.color} size="sm" />
-                        <Select value={r.game} onChange={(v) => updatePending(r.id, "game", v)} options={gamesDb.map((g) => ({ value: g.name, label: g.name }))} style={{ padding: "8px 12px", fontSize: 13, minWidth: 140 }} />
+                        <Select value={r.game} onChange={(v) => updatePending(r.id, "game", v)}
+                          options={gamesDb.map((g) => ({ value: g.name, label: g.name, tag: g.tag, color: g.color }))}
+                          renderSelected={(o) => <><GamePill tag={o.tag || r.tag} color={o.color || r.color} size="sm" />{o.label}</>}
+                          renderOption={(o) => <><GamePill tag={o.tag} color={o.color} size="sm" />{o.label}</>}
+                          style={{ minWidth: 160 }} />
                       </div>
                       <MiniSpinbox label="Day" value={r.day} onChange={(v) => updatePending(r.id, "day", v)} />
                       <MiniSpinbox label="Pt" value={r.part} onChange={(v) => updatePending(r.id, "part", v)} />

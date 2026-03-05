@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import T from "../styles/theme";
-import { Card, PageHeader, SectionLabel, GamePill, PulseDot, InfoBanner } from "../components/shared";
+import { Card, PageHeader, SectionLabel, GamePill, PulseDot, InfoBanner, hasHashtag } from "../components/shared";
 import { GameEditModal } from "../components/modals";
 
 // Shared button styles used across all settings sections
@@ -8,13 +8,299 @@ const BTN = { padding: "6px 12px", borderRadius: 6, fontSize: 12, cursor: "point
 const btnSecondary = { ...BTN, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary };
 const btnSave = { ...BTN, background: T.green, border: "none", color: "#fff", fontWeight: 700 };
 const inputStyle = { width: "100%", background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "10px 14px", color: T.text, fontSize: 13, fontFamily: T.mono, outline: "none", boxSizing: "border-box" };
-const maskKey = (key) => (!key || key.length < 8) ? (key || "") : key.substring(0, 4) + "••••" + key.substring(key.length - 4);
+const maskKey = (key) => (!key || key.length < 8) ? (key || "") : key.substring(0, 4) + "\u2022\u2022\u2022\u2022" + key.substring(key.length - 4);
 
-export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, ignoredProcesses, setIgnoredProcesses, platforms, setPlatforms, r2Config, setR2Config, vizardApiKey, setVizardApiKey, onResetUploads }) {
+// ============ DOWNLOADS SECTION ============
+function DownloadsSection({ downloadPath, setDownloadPath, vizardProjects, downloadedClips, setDownloadedClips, onRefreshProject }) {
+  const [downloading, setDownloading] = useState({}); // { clipId: progress% }
+  const [errors, setErrors] = useState({}); // { clipId: errorMsg }
+  const [bulkActive, setBulkActive] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+
+  // Collect all approved clips that have a videoUrl AND a hashtag in the title
+  const approvedClips = [];
+  (vizardProjects || []).forEach((p) => {
+    if (!p.clips) return;
+    p.clips.forEach((c) => {
+      if ((c.status === "approved" || c.status === "ready") && c.videoUrl && hasHashtag(c.title)) {
+        approvedClips.push({ ...c, projectName: p.name, projectId: p.id, projectCreated: p.createdAt || p.created || "" });
+      }
+    });
+  });
+
+  // Listen for download progress
+  useEffect(() => {
+    if (!window.clipflow?.onDownloadProgress) return;
+    const cleanup = window.clipflow.onDownloadProgress((data) => {
+      if (data && data.clipId !== undefined && data.progress !== undefined) {
+        setDownloading((prev) => ({ ...prev, [data.clipId]: data.progress }));
+      }
+    });
+    return () => { if (typeof cleanup === "function") cleanup(); };
+  }, []);
+
+  const isDownloaded = (clipId) => {
+    if (!downloadedClips) return false;
+    if (downloadedClips instanceof Set) return downloadedClips.has(clipId);
+    if (Array.isArray(downloadedClips)) return downloadedClips.includes(clipId);
+    return false;
+  };
+
+  const markDownloaded = (clipId) => {
+    if (!setDownloadedClips) return;
+    setDownloadedClips((prev) => {
+      if (Array.isArray(prev)) return [...prev, clipId];
+      if (prev instanceof Set) return new Set([...prev, clipId]);
+      return [clipId];
+    });
+  };
+
+  // pickFolder returns a string path or null (not a dialog result object)
+  const browseDownloadPath = async () => {
+    if (!window.clipflow?.pickFolder) return;
+    const result = await window.clipflow.pickFolder();
+    if (result) {
+      setDownloadPath(result);
+    }
+  };
+
+  const sanitizeFilename = (title) => {
+    return (title || "clip").replace(/[<>:"/\\|?*]/g, "_").substring(0, 120);
+  };
+
+  const extractProjectDate = (clip) => {
+    if (clip.projectCreated) {
+      const d = new Date(clip.projectCreated);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().split("T")[0];
+      }
+    }
+    return new Date().toISOString().split("T")[0];
+  };
+
+  const downloadOne = useCallback(async (clip) => {
+    if (!downloadPath || !clip.videoUrl) return false;
+
+    const date = extractProjectDate(clip);
+    const fileName = `${sanitizeFilename(clip.title)}_${date}.mp4`;
+    const sep = downloadPath.includes("/") ? "/" : "\\";
+    const savePath = `${downloadPath}${sep}${fileName}`;
+
+    setDownloading((prev) => ({ ...prev, [clip.id]: 0 }));
+    setErrors((prev) => { const n = { ...prev }; delete n[clip.id]; return n; });
+
+    try {
+      // Set up progress listener specific to this clip
+      let progressUnsub = null;
+      if (window.clipflow?.onDownloadProgress) {
+        progressUnsub = window.clipflow.onDownloadProgress((data) => {
+          if (data.url === clip.videoUrl) {
+            setDownloading((prev) => ({ ...prev, [clip.id]: data.progress }));
+          }
+        });
+      }
+
+      const result = await window.clipflow.downloadClip(clip.videoUrl, savePath);
+
+      if (typeof progressUnsub === "function") progressUnsub();
+
+      if (result && result.success) {
+        markDownloaded(clip.id);
+        setDownloading((prev) => { const n = { ...prev }; delete n[clip.id]; return n; });
+        return true;
+      }
+
+      setErrors((prev) => ({ ...prev, [clip.id]: result?.error || "Download failed" }));
+      setDownloading((prev) => { const n = { ...prev }; delete n[clip.id]; return n; });
+      return false;
+    } catch (e) {
+      setErrors((prev) => ({ ...prev, [clip.id]: e.message || "Download failed" }));
+      setDownloading((prev) => { const n = { ...prev }; delete n[clip.id]; return n; });
+      return false;
+    }
+  }, [downloadPath, downloadedClips]);
+
+  const pendingClips = approvedClips.filter((c) => !isDownloaded(c.id) && !errors[c.id]);
+  const downloadedCount = approvedClips.filter((c) => isDownloaded(c.id)).length;
+  const errorClips = approvedClips.filter((c) => errors[c.id]);
+
+  const downloadAll = useCallback(async () => {
+    const toDownload = approvedClips.filter((c) => !isDownloaded(c.id) && !downloading[c.id]);
+    if (!downloadPath || toDownload.length === 0) return;
+
+    setBulkActive(true);
+    setBulkProgress({ done: 0, total: toDownload.length });
+
+    // If URLs might be expired (7+ days old), refresh project data first
+    if (onRefreshProject) {
+      const projectIds = [...new Set(toDownload.map((c) => c.projectId))];
+      for (const pid of projectIds) {
+        await onRefreshProject(pid);
+      }
+    }
+
+    let completed = 0;
+    for (const clip of toDownload) {
+      if (isDownloaded(clip.id)) {
+        completed++;
+        setBulkProgress({ done: completed, total: toDownload.length });
+        continue;
+      }
+      const success = await downloadOne(clip);
+      if (success) completed++;
+      setBulkProgress({ done: completed, total: toDownload.length });
+    }
+
+    setBulkActive(false);
+  }, [downloadPath, approvedClips, downloadedClips, downloading, downloadOne, onRefreshProject]);
+
+  const retryFailed = useCallback(async () => {
+    const failed = approvedClips.filter((c) => errors[c.id]);
+    if (failed.length === 0) return;
+    setBulkActive(true);
+    setBulkProgress({ done: 0, total: failed.length });
+
+    let completed = 0;
+    for (const clip of failed) {
+      const success = await downloadOne(clip);
+      if (success) completed++;
+      setBulkProgress({ done: completed, total: failed.length });
+    }
+    setBulkActive(false);
+  }, [approvedClips, errors, downloadOne]);
+
+  function getDownloadButtonContent() {
+    if (bulkActive) {
+      return `Downloading... (${bulkProgress.done}/${bulkProgress.total})`;
+    }
+    if (pendingClips.length === 0 && errorClips.length === 0 && downloadedCount > 0) {
+      return "\u2705 All Downloaded";
+    }
+    if (pendingClips.length > 0) {
+      return `Download ${pendingClips.length} Clip${pendingClips.length !== 1 ? "s" : ""}`;
+    }
+    return null;
+  }
+
+  const buttonContent = getDownloadButtonContent();
+  const allDone = pendingClips.length === 0 && errorClips.length === 0 && downloadedCount > 0;
+
+  return (
+    <Card style={{ padding: 24 }}>
+      <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Downloads</div>
+
+      {/* Download Path */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+        <span style={{ color: T.textTertiary, fontSize: 12, flexShrink: 0 }}>Save to</span>
+        <div style={{ flex: 1, background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "8px 12px", color: downloadPath ? T.text : T.textMuted, fontSize: 12, fontFamily: T.mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {downloadPath || "No folder selected"}
+        </div>
+        <button onClick={browseDownloadPath} style={{ ...BTN, background: T.accentDim, border: `1px solid ${T.accentBorder}`, color: T.accentLight, fontWeight: 700, flexShrink: 0 }}>Browse</button>
+        {downloadPath && (
+          <button onClick={() => { if (window.clipflow?.openFolder) window.clipflow.openFolder(downloadPath); }} style={{ ...BTN, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, color: T.textSecondary, flexShrink: 0 }} title="Open folder">{"\ud83d\udcc2"}</button>
+        )}
+      </div>
+
+      {/* Download button */}
+      {downloadPath && buttonContent && (
+        <div style={{ marginBottom: 16 }}>
+          <button
+            onClick={allDone ? undefined : downloadAll}
+            disabled={bulkActive || allDone}
+            style={{
+              ...BTN,
+              padding: "10px 20px",
+              fontSize: 14,
+              fontWeight: 700,
+              background: allDone ? T.greenDim : T.accentDim,
+              border: `1px solid ${allDone ? T.greenBorder : T.accentBorder}`,
+              color: allDone ? T.green : T.accentLight,
+              opacity: bulkActive ? 0.7 : 1,
+              cursor: bulkActive || allDone ? "default" : "pointer",
+            }}
+          >
+            {buttonContent}
+          </button>
+        </div>
+      )}
+
+      {/* Retry failed button */}
+      {!bulkActive && errorClips.length > 0 && downloadPath && (
+        <div style={{ marginBottom: 16 }}>
+          <button
+            onClick={retryFailed}
+            style={{ ...BTN, padding: "8px 16px", background: T.redDim, border: `1px solid ${T.redBorder}`, color: T.red, fontWeight: 700 }}
+          >
+            Retry {errorClips.length} Failed
+          </button>
+        </div>
+      )}
+
+      {/* Clip List */}
+      {!downloadPath ? (
+        <InfoBanner icon={"\ud83d\udcc1"} color={T.yellow}>Select a download folder above to start downloading approved clips.</InfoBanner>
+      ) : approvedClips.length === 0 ? (
+        <InfoBanner icon={"\ud83c\udfac"} color={T.accent}>No approved clips with hashtags to download. Approve clips in the Projects tab first.</InfoBanner>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {approvedClips.map((clip) => {
+            const isActive = downloading[clip.id] !== undefined;
+            const isDone = isDownloaded(clip.id);
+            const hasError = errors[clip.id];
+            const progress = downloading[clip.id] || 0;
+
+            let statusColor = T.textMuted;
+            let statusText = "Pending";
+            let statusIcon = "";
+
+            if (isDone) {
+              statusColor = T.green;
+              statusText = "Downloaded";
+              statusIcon = "\u2705";
+            } else if (isActive) {
+              statusColor = T.accent;
+              statusText = `Downloading... ${progress}%`;
+              statusIcon = "\u23f3";
+            } else if (hasError) {
+              statusColor = T.red;
+              statusText = "Failed";
+              statusIcon = "\u26a0";
+            }
+
+            return (
+              <div key={clip.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(255,255,255,0.02)", borderRadius: T.radius.md, border: `1px solid ${isDone ? T.greenBorder : hasError ? T.redBorder : T.border}`, position: "relative", overflow: "hidden" }}>
+                {/* Progress bar background */}
+                {isActive && (
+                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${progress}%`, background: `${T.accent}12`, transition: "width 0.3s ease", pointerEvents: "none" }} />
+                )}
+                <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+                  <div style={{ color: T.text, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{clip.title}</div>
+                </div>
+                <div style={{ flexShrink: 0, position: "relative" }}>
+                  <span style={{ color: statusColor, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
+                    {statusIcon} {statusText}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Summary */}
+          <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+            <span style={{ color: T.textTertiary, fontSize: 11 }}>{approvedClips.length} clip{approvedClips.length !== 1 ? "s" : ""}</span>
+            {downloadedCount > 0 && <span style={{ color: T.green, fontSize: 11 }}>{downloadedCount} downloaded</span>}
+            {pendingClips.length > 0 && <span style={{ color: T.textSecondary, fontSize: 11 }}>{pendingClips.length} pending</span>}
+            {errorClips.length > 0 && <span style={{ color: T.red, fontSize: 11 }}>{errorClips.length} failed</span>}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, platforms, setPlatforms, r2Config, setR2Config, vizardApiKey, setVizardApiKey, downloadPath, setDownloadPath, vizardProjects, onResetUploads, downloadedClips, setDownloadedClips, onRefreshProject }) {
   const [editFolder, setEditFolder] = useState(false);
   const [folderVal, setFolderVal] = useState(watchFolder);
-  const [editIgn, setEditIgn] = useState(false);
-  const [ignVal, setIgnVal] = useState(ignoredProcesses.join("\n"));
   const [editGD, setEditGD] = useState(null);
   const [showAddMain, setShowAddMain] = useState(false);
   const [selGameLib, setSelGameLib] = useState(null);
@@ -23,12 +309,28 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
   const [editVizard, setEditVizard] = useState(false);
   const [vizVal, setVizVal] = useState(vizardApiKey || "");
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [showR2Secret, setShowR2Secret] = useState(false);
+  const [showVizardKey, setShowVizardKey] = useState(false);
+  const [showR2SecretEdit, setShowR2SecretEdit] = useState(false);
+  const [showVizardKeyEdit, setShowVizardKeyEdit] = useState(false);
+  const [copiedField, setCopiedField] = useState(null);
+  const [showR2, setShowR2] = useState(false);
+  const [showVizard, setShowVizard] = useState(false);
+
+  const copyToClipboard = (value, fieldName) => {
+    if (!value) return;
+    navigator.clipboard.writeText(value);
+    setCopiedField(fieldName);
+    setTimeout(() => setCopiedField(null), 1500);
+  };
+
+  const iconBtn = { background: "none", border: "none", cursor: "pointer", padding: "2px 4px", fontSize: 14, lineHeight: 1, opacity: 0.6, transition: "opacity 0.15s" };
 
   const browseFolder = async () => {
     if (!window.clipflow?.pickFolder) return;
     const result = await window.clipflow.pickFolder();
-    if (result && !result.canceled && result.filePaths && result.filePaths.length > 0) {
-      setWatchFolder(result.filePaths[0]);
+    if (result) {
+      setWatchFolder(result);
     }
   };
 
@@ -36,6 +338,17 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
   const rmMain = (name) => setMainPool((p) => p.filter((n) => n !== name));
   const delGame = (name) => { setGamesDb((p) => p.filter((g) => g.name !== name)); setMainPool((p) => p.filter((n) => n !== name)); };
   const nonPool = gamesDb.filter((g) => !mainPool.includes(g.name));
+
+  const r2Configured = Boolean(r2Config?.accessKeyId);
+  const vizardConfigured = Boolean(vizardApiKey);
+
+  const collapsibleHeaderStyle = {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    cursor: "pointer",
+    userSelect: "none",
+  };
 
   return (
     <div>
@@ -105,7 +418,6 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
                 <GamePill tag={g.tag} color={g.color} size="sm" />
                 <span style={{ color: T.text, fontSize: 13, fontWeight: 600 }}>{g.name}</span>
                 {g.active === false && <span style={{ color: T.textMuted, fontSize: 10, fontWeight: 600, fontStyle: "italic" }}>inactive</span>}
-                {isSel && <span style={{ color: T.textMuted, fontSize: 11, fontFamily: T.mono }}>#{g.hashtag}</span>}
                 <button onClick={(e) => { e.stopPropagation(); delGame(g.name); }} style={{ background: "none", border: "none", color: T.textMuted, fontSize: 11, cursor: "pointer", padding: "0 0 0 2px" }}>{"\u2715"}</button>
               </div>
             );
@@ -126,107 +438,163 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         </div>
       </Card>
 
-      {/* R2 Configuration */}
+      {/* R2 Configuration — Collapsible */}
       <Card style={{ padding: 24, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Cloudflare R2</div>
-          {!editR2 ? (
-            <button onClick={() => { setEditR2(true); setR2Vals(r2Config || {}); }} style={btnSecondary}>Edit</button>
-          ) : (
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setEditR2(false)} style={btnSecondary}>Cancel</button>
-              <button onClick={() => { setR2Config(r2Vals); setEditR2(false); }} style={btnSave}>Save</button>
-            </div>
-          )}
-        </div>
-        {editR2 ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {[
-              { key: "accountId", label: "Account ID" },
-              { key: "accessKeyId", label: "Access Key ID" },
-              { key: "secretAccessKey", label: "Secret Access Key" },
-              { key: "bucketName", label: "Bucket Name" },
-              { key: "publicBaseUrl", label: "Public Base URL" },
-            ].map((field) => (
-              <div key={field.key}>
-                <SectionLabel>{field.label}</SectionLabel>
-                <input
-                  value={r2Vals[field.key] || ""}
-                  onChange={(e) => setR2Vals((p) => ({ ...p, [field.key]: e.target.value }))}
-                  type={field.key.toLowerCase().includes("secret") ? "password" : "text"}
-                  style={{ ...inputStyle, marginTop: 6 }}
-                />
+        <div
+          onClick={() => { if (!editR2) setShowR2(!showR2); }}
+          style={collapsibleHeaderStyle}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Cloudflare R2</div>
+            <span style={{ color: T.textTertiary, fontSize: 14, transition: "transform 0.2s", display: "inline-block", transform: showR2 ? "rotate(90deg)" : "none" }}>{"\u25b8"}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {!showR2 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <PulseDot color={r2Configured ? T.green : T.red} size={6} />
+                <span style={{ color: r2Configured ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>
+                  {r2Configured ? "Configured" : "Not configured"}
+                </span>
               </div>
-            ))}
+            )}
+            {showR2 && !editR2 && (
+              <button onClick={(e) => { e.stopPropagation(); setEditR2(true); setR2Vals(r2Config || {}); }} style={btnSecondary}>Edit</button>
+            )}
+            {editR2 && (
+              <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setEditR2(false)} style={btnSecondary}>Cancel</button>
+                <button onClick={() => { setR2Config(r2Vals); setEditR2(false); }} style={btnSave}>Save</button>
+              </div>
+            )}
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>Bucket</span>
-              <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono }}>{r2Config?.bucketName || "Not set"}</span>
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>Access Key</span>
-              <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono }}>{maskKey(r2Config?.accessKeyId)}</span>
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>Status</span>
-              <PulseDot color={r2Config?.accessKeyId ? T.green : T.red} size={6} />
-              <span style={{ color: r2Config?.accessKeyId ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{r2Config?.accessKeyId ? "Configured" : "Not configured"}</span>
-            </div>
+        </div>
+        {(showR2 || editR2) && (
+          <div style={{ marginTop: 14 }}>
+            {editR2 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {[
+                  { key: "accountId", label: "Account ID" },
+                  { key: "accessKeyId", label: "Access Key ID" },
+                  { key: "secretAccessKey", label: "Secret Access Key", secret: true },
+                  { key: "bucketName", label: "Bucket Name" },
+                  { key: "publicBaseUrl", label: "Public Base URL" },
+                ].map((field) => (
+                  <div key={field.key}>
+                    <SectionLabel>{field.label}</SectionLabel>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                      <input
+                        value={r2Vals[field.key] || ""}
+                        onChange={(e) => setR2Vals((p) => ({ ...p, [field.key]: e.target.value }))}
+                        type={field.secret && !showR2SecretEdit ? "password" : "text"}
+                        style={{ ...inputStyle, flex: 1 }}
+                      />
+                      {field.secret && (
+                        <button onClick={() => setShowR2SecretEdit(!showR2SecretEdit)} style={{ ...iconBtn, color: T.textTertiary }} title={showR2SecretEdit ? "Hide" : "Show"}>{showR2SecretEdit ? "\ud83d\udc41" : "\ud83d\udc41\u200d\ud83d\udde8"}</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {[
+                  { label: "Account ID", value: r2Config?.accountId },
+                  { label: "Access Key", value: r2Config?.accessKeyId },
+                  { label: "Secret Key", value: r2Config?.secretAccessKey, secret: true },
+                  { label: "Bucket", value: r2Config?.bucketName },
+                  { label: "Base URL", value: r2Config?.publicBaseUrl },
+                ].map((row) => (
+                  <div key={row.label} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ color: T.textTertiary, fontSize: 12, width: 80, flexShrink: 0 }}>{row.label}</span>
+                    <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {!row.value ? "Not set" : row.secret ? (showR2Secret ? row.value : maskKey(row.value)) : row.value}
+                    </span>
+                    {row.value && (
+                      <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                        {row.secret && (
+                          <button onClick={() => setShowR2Secret(!showR2Secret)} style={{ ...iconBtn, color: T.textTertiary }} title={showR2Secret ? "Hide" : "Show"}>{showR2Secret ? "\ud83d\udc41" : "\ud83d\udc41\u200d\ud83d\udde8"}</button>
+                        )}
+                        <button onClick={() => copyToClipboard(row.value, `r2-${row.label}`)} style={{ ...iconBtn, color: copiedField === `r2-${row.label}` ? T.green : T.textTertiary }}>
+                          {copiedField === `r2-${row.label}` ? "\u2713" : "\ud83d\udccb"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                  <span style={{ color: T.textTertiary, fontSize: 12, width: 80 }}>Status</span>
+                  <PulseDot color={r2Configured ? T.green : T.red} size={6} />
+                  <span style={{ color: r2Configured ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{r2Configured ? "Configured" : "Not configured"}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
 
-      {/* Vizard API */}
+      {/* Vizard API — Collapsible */}
       <Card style={{ padding: 24, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Vizard AI</div>
-          {!editVizard ? (
-            <button onClick={() => { setEditVizard(true); setVizVal(vizardApiKey || ""); }} style={btnSecondary}>Edit</button>
-          ) : (
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setEditVizard(false)} style={btnSecondary}>Cancel</button>
-              <button onClick={() => { setVizardApiKey(vizVal); setEditVizard(false); }} style={btnSave}>Save</button>
-            </div>
-          )}
-        </div>
-        {editVizard ? (
-          <div>
-            <SectionLabel>API Key</SectionLabel>
-            <input value={vizVal} onChange={(e) => setVizVal(e.target.value)} type="password" style={{ ...inputStyle, marginTop: 6 }} />
+        <div
+          onClick={() => { if (!editVizard) setShowVizard(!showVizard); }}
+          style={collapsibleHeaderStyle}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Vizard AI</div>
+            <span style={{ color: T.textTertiary, fontSize: 14, transition: "transform 0.2s", display: "inline-block", transform: showVizard ? "rotate(90deg)" : "none" }}>{"\u25b8"}</span>
           </div>
-        ) : (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ color: T.textTertiary, fontSize: 12, width: 100 }}>API Key</span>
-            <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono }}>{maskKey(vizardApiKey)}</span>
-            <PulseDot color={vizardApiKey ? T.green : T.red} size={6} />
-            <span style={{ color: vizardApiKey ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{vizardApiKey ? "Configured" : "Not set"}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {!showVizard && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <PulseDot color={vizardConfigured ? T.green : T.red} size={6} />
+                <span style={{ color: vizardConfigured ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>
+                  {vizardConfigured ? "Configured" : "Not set"}
+                </span>
+              </div>
+            )}
+            {showVizard && !editVizard && (
+              <button onClick={(e) => { e.stopPropagation(); setEditVizard(true); setVizVal(vizardApiKey || ""); setShowVizard(true); }} style={btnSecondary}>Edit</button>
+            )}
+            {editVizard && (
+              <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setEditVizard(false)} style={btnSecondary}>Cancel</button>
+                <button onClick={() => { setVizardApiKey(vizVal); setEditVizard(false); }} style={btnSave}>Save</button>
+              </div>
+            )}
           </div>
-        )}
-      </Card>
-
-      {/* Ignored Processes */}
-      <Card style={{ padding: 24, marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Ignored Processes</div>
-          {!editIgn ? (
-            <button onClick={() => { setEditIgn(true); setIgnVal(ignoredProcesses.join("\n")); }} style={btnSecondary}>Edit</button>
-          ) : (
-            <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setEditIgn(false)} style={btnSecondary}>Cancel</button>
-              <button onClick={() => { setIgnoredProcesses(ignVal.split("\n").map((s) => s.trim()).filter(Boolean)); setEditIgn(false); }} style={btnSave}>Save</button>
-            </div>
-          )}
         </div>
-        <p style={{ color: T.textTertiary, fontSize: 12, margin: editIgn ? "0 0 10px" : 0 }}>Exe processes that won't be suggested as games.</p>
-        {editIgn ? (
-          <textarea value={ignVal} onChange={(e) => setIgnVal(e.target.value)} rows={5} style={{ ...inputStyle, padding: 12, resize: "vertical" }} />
-        ) : (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-            {ignoredProcesses.map((p) => (
-              <span key={p} style={{ padding: "4px 10px", borderRadius: 6, background: "rgba(255,255,255,0.03)", border: `1px solid ${T.border}`, color: T.textTertiary, fontSize: 12, fontFamily: T.mono }}>{p}</span>
-            ))}
+        {(showVizard || editVizard) && (
+          <div style={{ marginTop: 14 }}>
+            {editVizard ? (
+              <div>
+                <SectionLabel>API Key</SectionLabel>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                  <input value={vizVal} onChange={(e) => setVizVal(e.target.value)} type={showVizardKeyEdit ? "text" : "password"} style={{ ...inputStyle, flex: 1 }} />
+                  <button onClick={() => setShowVizardKeyEdit(!showVizardKeyEdit)} style={{ ...iconBtn, color: T.textTertiary }} title={showVizardKeyEdit ? "Hide" : "Show"}>{showVizardKeyEdit ? "\ud83d\udc41" : "\ud83d\udc41\u200d\ud83d\udde8"}</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: T.textTertiary, fontSize: 12, width: 80 }}>API Key</span>
+                  <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {!vizardApiKey ? "Not set" : showVizardKey ? vizardApiKey : maskKey(vizardApiKey)}
+                  </span>
+                  {vizardApiKey && (
+                    <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                      <button onClick={() => setShowVizardKey(!showVizardKey)} style={{ ...iconBtn, color: T.textTertiary }} title={showVizardKey ? "Hide" : "Show"}>{showVizardKey ? "\ud83d\udc41" : "\ud83d\udc41\u200d\ud83d\udde8"}</button>
+                      <button onClick={() => copyToClipboard(vizardApiKey, "vizard-key")} style={{ ...iconBtn, color: copiedField === "vizard-key" ? T.green : T.textTertiary }}>
+                        {copiedField === "vizard-key" ? "\u2713" : "\ud83d\udccb"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: T.textTertiary, fontSize: 12, width: 80 }}>Status</span>
+                  <PulseDot color={vizardConfigured ? T.green : T.red} size={6} />
+                  <span style={{ color: vizardConfigured ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{vizardConfigured ? "Configured" : "Not set"}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -248,13 +616,17 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         <p style={{ color: T.textTertiary, fontSize: 12, margin: 0 }}>Clear the record of which files have been uploaded. This will not delete files from R2.</p>
       </Card>
 
-      {/* Downloads — empty until Vizard integration */}
-      <Card style={{ padding: 24 }}>
-        <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700, marginBottom: 14 }}>Downloads</div>
-        <InfoBanner icon={"\ud83d\udd17"} color={T.accent}>Vizard clip downloads will appear here once API integration is complete.</InfoBanner>
-      </Card>
+      {/* Downloads */}
+      <DownloadsSection
+        downloadPath={downloadPath}
+        setDownloadPath={setDownloadPath}
+        vizardProjects={vizardProjects}
+        downloadedClips={downloadedClips}
+        setDownloadedClips={setDownloadedClips}
+        onRefreshProject={onRefreshProject}
+      />
 
-      {editGD && <GameEditModal game={editGD} onSave={(g) => { onEditGame(g); setEditGD(null); }} onClose={() => setEditGD(null)} />}
+      {editGD && <GameEditModal game={editGD} onSave={(g) => { onEditGame(g); setEditGD(null); setSelGameLib(null); }} onClose={() => { setEditGD(null); setSelGameLib(null); }} />}
     </div>
   );
 }

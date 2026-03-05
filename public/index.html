@@ -24,12 +24,14 @@
         -webkit-app-region: no-drag;
       }
 
-      /* Custom scrollbar */
+      /* Custom scrollbar — thin, contained within UI boundaries */
       *::-webkit-scrollbar {
-        width: 6px;
+        width: 5px;
+        height: 5px;
       }
       *::-webkit-scrollbar-track {
         background: transparent;
+        margin: 4px 0;
       }
       *::-webkit-scrollbar-thumb {
         background: rgba(255, 255, 255, 0.1);
@@ -37,6 +39,9 @@
       }
       *::-webkit-scrollbar-thumb:hover {
         background: rgba(255, 255, 255, 0.2);
+      }
+      *::-webkit-scrollbar-corner {
+        background: transparent;
       }
 
       /* PulseDot animation */

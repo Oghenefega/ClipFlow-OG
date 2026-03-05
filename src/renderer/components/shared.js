@@ -88,15 +88,41 @@ export const TabBar = ({ tabs, active, onChange }) => (
   </div>
 );
 
-export const Select = ({ value, onChange, options, style: x }) => (
-  <select value={value} onChange={(e) => onChange(e.target.value)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "12px 16px", color: T.text, fontSize: 14, fontFamily: T.font, outline: "none", cursor: "pointer", appearance: "auto", ...x }}>
-    {options.map((o) => {
-      const v = typeof o === "string" ? o : o.value;
-      const l = typeof o === "string" ? o : o.label;
-      return <option key={v} value={v} style={{ background: T.surface, color: T.text }}>{l}</option>;
-    })}
-  </select>
-);
+export const Select = ({ value, onChange, options, style: x, renderOption, renderSelected }) => {
+  const [open, setOpen] = useState(false);
+  const [hovIdx, setHovIdx] = useState(-1);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const parsed = options.map((o) => typeof o === "string" ? { value: o, label: o } : o);
+  const selected = parsed.find((o) => o.value === value);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block", ...x }}>
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: T.surface, border: `1px solid ${open ? T.accentBorder : T.border}`, borderRadius: T.radius.md, padding: "8px 12px", color: T.text, fontSize: 13, fontFamily: T.font, cursor: "pointer", outline: "none", textAlign: "left" }}>
+        <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 6 }}>
+          {renderSelected && selected ? renderSelected(selected) : (selected?.label || value)}
+        </span>
+        <span style={{ color: T.textMuted, fontSize: 10, transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "none" }}>{"\u25BC"}</span>
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, minWidth: "100%", maxHeight: 240, overflowY: "auto", overflowX: "hidden", background: T.surface, border: `1px solid ${T.borderHover || T.border}`, borderRadius: T.radius.md, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", zIndex: 999, padding: 4 }}>
+          {parsed.map((o, i) => (
+            <div key={o.value} onMouseEnter={() => setHovIdx(i)} onMouseLeave={() => setHovIdx(-1)} onClick={() => { onChange(o.value); setOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 6, cursor: "pointer", background: o.value === value ? "rgba(139,92,246,0.12)" : hovIdx === i ? "rgba(255,255,255,0.06)" : "transparent", color: o.value === value ? T.accentLight : T.text, fontSize: 13, fontFamily: T.font, fontWeight: o.value === value ? 600 : 400, transition: "background 0.1s" }}>
+              {renderOption ? renderOption(o) : o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const ViralBar = ({ score }) => {
   const c = score >= 8.5 ? T.green : score >= 7 ? T.yellow : T.red;

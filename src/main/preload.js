@@ -55,6 +55,13 @@ contextBridge.exposeInMainWorld("clipflow", {
   vizardPublishClip: (options) => ipcRenderer.invoke("vizard:publishClip", options),
   vizardGenerateCaption: (options) => ipcRenderer.invoke("vizard:generateCaption", options),
 
+  // Downloads
+  downloadClip: (url, savePath) => ipcRenderer.invoke("download:clip", url, savePath),
+  onDownloadProgress: (callback) => {
+    ipcRenderer.on("download:progress", (_, data) => callback(data));
+    return () => ipcRenderer.removeAllListeners("download:progress");
+  },
+
   // Platform info
   platform: process.platform,
 });

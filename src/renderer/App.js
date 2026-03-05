@@ -30,13 +30,25 @@ const PUBLISH_ORDER_INIT = [
   { key: "youtube2", platform: "YouTube", abbr: "YT", name: "ThatGuy", connected: true, vizardAccountId: "dml6YXJkLTEtMTc0NTM0" },
   { key: "tiktok2", platform: "TikTok", abbr: "TT", name: "thatguyfega", connected: true, vizardAccountId: "dml6YXJkLTItMTc0NTM3" },
 ];
+const DEFAULT_TIME_SLOTS = ["12:30 PM","1:30 PM","2:30 PM","3:30 PM","4:30 PM","7:30 PM","8:30 PM","9:30 PM"];
 const DEFAULT_TEMPLATE = {
-  Monday: ["main","main","main","main","main","main","main","main"],
-  Tuesday: ["main","other","main","other","main","other","main","main"],
-  Wednesday: ["main","other","other","main","other","other","other","main"],
-  Thursday: ["main","other","other","main","other","other","main","main"],
-  Friday: ["main","other","other","main","other","other","other","main"],
-  Saturday: ["main","other","main","other","main","other","main","main"],
+  timeSlots: [...DEFAULT_TIME_SLOTS],
+  grid: {
+    Monday: ["main","main","main","main","main","main","main","main"],
+    Tuesday: ["main","other","main","other","main","other","main","main"],
+    Wednesday: ["main","other","other","main","other","other","other","main"],
+    Thursday: ["main","other","other","main","other","other","main","main"],
+    Friday: ["main","other","other","main","other","other","other","main"],
+    Saturday: ["main","other","main","other","main","other","main","main"],
+  },
+};
+
+// Migrate old template format (no timeSlots key) to new format
+const migrateTemplate = (tmpl) => {
+  if (!tmpl) return JSON.parse(JSON.stringify(DEFAULT_TEMPLATE));
+  if (tmpl.timeSlots && tmpl.grid) return tmpl;
+  // Old format: { Monday: [...], Tuesday: [...], ... }
+  return { timeSlots: [...DEFAULT_TIME_SLOTS], grid: { ...tmpl } };
 };
 
 // Real YouTube descriptions from Fega's actual description files
@@ -49,6 +61,72 @@ const REAL_YT_DESCRIPTIONS = {
   "Bionic Bay": { desc: "The funniest and most chaotic Bionic Bay moments from my streams\u{1F602}\n\nStay connected & support the journey \n\u{1F514}SUBSCRIBE https://www.youtube.com/@Fega  \n\u{1F4AA}\u{1F3FD} Become a member: https://www.youtube.com/@Fega/join   \n\nMultistreaming ON \nTwitch: https://www.twitch.tv/fegaabsolute  \nKick: https://www.kick.com/fegaabsolute  \nTiktok: https://www.tiktok.com/fega  \n\n\u{1F53D} Watch My Best Videos \u{1F525}  \n\u{1F3AE} Old but Gold \u2013 Gaming Highlights & Reactions (Valorant, Fortnite,  Fall Guys, Outlast):  https://www.youtube.com/watch?v=GjYKMJdpESM&list=PLb2kk3HKq1SY6wAXPzbptMKqXULJulUmO    \n\n\u{1F4F2} Follow the Journey:  \n\u27A1 https://instagram.com/fegagaming \n\u27A1 https://twitter.com/FegaAbsolute   \n\n\u{1F3AE}Stream Setup  \nCamera | Sony ZVE10 - https://amzn.to/44QBgk7  \nLens | Vlog Lens (Sigma 18-35 lens) - https://amzn.to/4eX3oXm  \nMic | Blue Snowball - https://amzn.to/40ty3pw  \nElgato CamLink - https://amzn.to/4m1REVR  \nElgato Teleprompter - https://amzn.to/45a4Hit  \nGaming Mouse | Glorious Model O Wireless - https://amzn.to/453cwWe   \n\n\u2702\uFE0FMy Content & Editing Essentials  \nBEST Keyboard EVER | https://charachorder.com/FEGA  \nEditing Mouse | Master MX 3s - https://amzn.to/4kQ5D0j  \nNVME SSD Enclosure Casing - https://amzn.to/4nUunH9  \n2tb Samsung SSD - https://amzn.to/4lCtDFm   \n\n\u{1F4B8} All links above are affiliate links. \nPurchasing anything through them  helps support me. Thank you and God bless you!   \n\nbionic bay shorts, bionic bay funny moments, bionic bay gameplay, funny gaming shorts, gaming shorts, physics platformer clips, funny gaming moments, funny clips, stream highlights, gaming content, gaming videos, indie game highlights, sci fi platformer, bionic bay highlights, bionic bay fails, bionic bay clutch, bionic bay insane moments, bionic bay rage moments, bionic bay clean runs, bionic bay speedrun moments, bionic bay platforming, bionic bay physics gameplay, bionic bay challenging levels, bionic bay satisfying gameplay, bionic bay parkour, bionic bay reaction, bionic bay indie game, bionic bay new game, indie game funny moments, indie game gameplay shorts, streamer shorts, live gaming shorts, live reaction, YouTube Live, Fega, daily streams, gaming creator, recommended gaming shorts\n\n#BionicBay #gamingshorts #Fega" },
   "Prince of Persia": { desc: "\u{1F534}Live every day 5PM\nFunniest Prince of Persia moments\u{1F602}\n\n\u{1F514}SUBSCRIBE https://www.youtube.com/@Fega\n\u{1F4AA}\u{1F3FD} Become a member: https://www.youtube.com/@Fega/join\n\n#princeofpersia #gamingshorts #Fega" },
 };
+
+// Seed Vizard project IDs for auto-import (Fega's existing projects)
+const SEED_PROJECT_IDS = ["28647499", "28676572"];
+
+// ============ VIZARD CLIP MAPPING HELPER ============
+// Maps raw Vizard API video objects to our clip model, deduplicates re-edits
+function mapVizardClips(videos, existingClips = []) {
+  // Map API response — videoId is THE unique identifier per Vizard docs
+  const mapped = (videos || []).map((v) => {
+    // Extract clipEditorId from clipEditorUrl for deduplication
+    // Vizard creates multiple versions when clips are re-edited; they share the same clipEditorUrl id
+    const editorMatch = (v.clipEditorUrl || "").match(/id=(\d+)/);
+    const clipEditorId = editorMatch ? editorMatch[1] : null;
+
+    return {
+      id: String(v.videoId),
+      videoId: v.videoId,
+      title: v.title || "Untitled",
+      duration: Math.round((v.videoMsDuration || 0) / 1000),
+      viralScore: v.viralScore || 0,
+      viralReason: v.viralReason || "",
+      transcript: v.transcript || "",
+      videoUrl: v.videoUrl || "",
+      clipEditorUrl: v.clipEditorUrl || "",
+      clipEditorId,
+      status: "none",
+    };
+  });
+
+  // Step 1: Deduplicate re-edits first — group by clipEditorId, keep highest videoId (latest version)
+  const groups = {};
+  for (const clip of mapped) {
+    const key = clip.clipEditorId || clip.id;
+    if (!groups[key] || clip.videoId > (groups[key].videoId || 0)) {
+      groups[key] = clip;
+    }
+  }
+  const deduped = Object.values(groups);
+
+  // Step 2: Filter out source/original video using duration-based heuristic
+  // The source video is the original upload (typically 10-60 min = 600-3600s)
+  // AI-generated clips are short (typically 15-90s, rarely over 120s)
+  // Strategy: if the longest video is > 3 minutes AND > 3x the second-longest, it's the source
+  let clipsOnly = deduped;
+  if (deduped.length > 1) {
+    const sorted = [...deduped].sort((a, b) => b.duration - a.duration);
+    const longest = sorted[0];
+    const secondLongest = sorted[1];
+    if (longest.duration > 180 && secondLongest.duration > 0 && longest.duration > secondLongest.duration * 3) {
+      clipsOnly = deduped.filter((c) => c.id !== longest.id);
+    }
+  }
+
+  // Merge with existing clips to preserve user edits (status, title)
+  return clipsOnly.map((clip) => {
+    const existing = existingClips.find((c) => String(c.videoId) === String(clip.videoId));
+    if (existing) {
+      return {
+        ...clip,
+        title: existing.title,
+        status: existing.status,
+      };
+    }
+    return clip;
+  });
+}
 
 // No more mock data — managedFiles are scanned from filesystem, renameHistory is persisted
 
@@ -93,6 +171,8 @@ export default function App() {
   const [platforms, setPlatforms] = useState(PUBLISH_ORDER_INIT);
   const [r2Config, setR2Config] = useState({});
   const [vizardApiKey, setVizardApiKey] = useState("");
+  const [downloadPath, setDownloadPath] = useState("");
+  const [downloadedClips, setDownloadedClips] = useState([]);
 
   // Queue / Tracker
   const [weeklyTemplate, setWeeklyTemplate] = useState(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
@@ -131,15 +211,44 @@ export default function App() {
           });
           setPlatforms(merged);
         }
-        if (all.weeklyTemplate) setWeeklyTemplate(all.weeklyTemplate);
+        if (all.weeklyTemplate) setWeeklyTemplate(migrateTemplate(all.weeklyTemplate));
         if (all.trackerData) setTrackerData(all.trackerData);
-        if (all.weekTemplateOverrides) setWeekTemplateOverrides(all.weekTemplateOverrides);
-        if (all.savedTemplates) setSavedTemplates(all.savedTemplates);
+        if (all.weekTemplateOverrides) {
+          // Migrate each override
+          const migrated = {};
+          for (const [k, v] of Object.entries(all.weekTemplateOverrides)) migrated[k] = migrateTemplate(v);
+          setWeekTemplateOverrides(migrated);
+        }
+        if (all.savedTemplates) setSavedTemplates(all.savedTemplates.map((p) => ({ ...p, template: migrateTemplate(p.template) })));
         if (all.mainGameHistory) setMainGameHistory(all.mainGameHistory);
         if (all.captionTemplates) setCaptionTemplates(all.captionTemplates);
         if (all.r2Config) setR2Config(all.r2Config);
         if (all.vizardApiKey) setVizardApiKey(all.vizardApiKey);
-        if (all.vizardProjects) setVizardProjects(all.vizardProjects);
+        if (all.downloadPath) setDownloadPath(all.downloadPath);
+        if (all.downloadedClips) setDownloadedClips(all.downloadedClips);
+        if (all.vizardProjects) {
+          // Migration: fix corrupted clip IDs (from previous bug where auto-refresh set all IDs to "undefined")
+          // Also: re-filter source videos from persisted data using duration heuristic
+          const fixed = all.vizardProjects.map((proj) => {
+            if (!proj.clips || proj.clips.length === 0) return proj;
+            const hasCorrupted = proj.clips.some((c) => !c.id || c.id === "undefined" || !c.videoId);
+            if (hasCorrupted) {
+              // Clear corrupted clips — auto-refresh will re-fetch from Vizard API
+              return { ...proj, clips: [], status: "processing" };
+            }
+            // Remove source videos that slipped through old filters (duration-based)
+            if (proj.clips.length > 1) {
+              const sorted = [...proj.clips].sort((a, b) => (b.duration || 0) - (a.duration || 0));
+              const longest = sorted[0];
+              const secondLongest = sorted[1];
+              if (longest.duration > 180 && secondLongest.duration > 0 && longest.duration > secondLongest.duration * 3) {
+                return { ...proj, clips: proj.clips.filter((c) => c.id !== longest.id) };
+              }
+            }
+            return proj;
+          });
+          setVizardProjects(fixed);
+        }
         if (all.uploadedFiles) setUploadedFiles(all.uploadedFiles);
         if (all.renameHistory) setRenameHistory(all.renameHistory);
         // For ytDescriptions: merge real defaults with any saved overrides
@@ -182,6 +291,65 @@ export default function App() {
     load();
   }, []);
 
+  // ============ AUTO-IMPORT SEED PROJECTS + AUTO-REFRESH ============
+  useEffect(() => {
+    if (!loaded || !vizardApiKey) return;
+    if (!window.clipflow?.vizardQueryProject) return;
+
+    const importAndRefresh = async () => {
+      // 1. Seed projects — import any that aren't already in the list
+      for (const id of SEED_PROJECT_IDS) {
+        if (vizardProjects.some((p) => String(p.id) === id)) continue;
+        try {
+          const result = await window.clipflow.vizardQueryProject(id);
+          // Vizard API returns data at top level: { code, videos, projectName, projectId }
+          if (result.error || result.code !== 2000 || !result.projectId) continue;
+          const clips = mapVizardClips(result.videos);
+          const project = {
+            id: String(result.projectId || id),
+            name: result.projectName || `Vizard Project ${id}`,
+            status: clips.length > 0 ? "ready" : "processing",
+            progress: result.progress || 0,
+            clips,
+            createdAt: new Date().toISOString(),
+            game: "Unknown",
+            gameTag: "?",
+            gameColor: T.accent,
+            imported: true,
+          };
+          setVizardProjects((prev) => {
+            if (prev.some((p) => String(p.id) === String(project.id))) return prev;
+            return [...prev, project];
+          });
+        } catch (e) {
+          console.error(`Failed to seed project ${id}:`, e);
+        }
+      }
+
+      // 2. Auto-refresh all existing "ready" projects to get fresh clip data / URLs
+      for (const proj of vizardProjects) {
+        if (proj.status === "processing") continue; // polling already handles these
+        try {
+          const result = await window.clipflow.vizardQueryProject(proj.id);
+          // Vizard API returns data at top level: { code, videos, projectName, projectId }
+          if (result.error || result.code !== 2000) continue;
+          if (result.videos) {
+            setVizardProjects((prev) => prev.map((p) => {
+              if (p.id !== String(proj.id)) return p;
+              // Merge — deduplicate and preserve user edits (status, title)
+              const updatedClips = mapVizardClips(result.videos, p.clips || []);
+              return { ...p, clips: updatedClips, status: "ready" };
+            }));
+          }
+        } catch (e) {
+          console.error(`Failed to refresh project ${proj.id}:`, e);
+        }
+      }
+    };
+
+    importAndRefresh();
+  }, [loaded, vizardApiKey]); // eslint-disable-line
+
   // ============ AUTO-SAVE TO ELECTRON-STORE ============
   const hasLoaded = useRef(false);
   useEffect(() => {
@@ -203,6 +371,8 @@ export default function App() {
   useEffect(() => { if (!hasLoaded.current) return; persist("ytDescriptions", ytDescriptions); }, [ytDescriptions]);
   useEffect(() => { if (!hasLoaded.current) return; persist("r2Config", r2Config); }, [r2Config]);
   useEffect(() => { if (!hasLoaded.current) return; persist("vizardApiKey", vizardApiKey); }, [vizardApiKey]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("downloadPath", downloadPath); }, [downloadPath]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("downloadedClips", downloadedClips); }, [downloadedClips]);
   useEffect(() => { if (!hasLoaded.current) return; persist("vizardProjects", vizardProjects); }, [vizardProjects]);
   useEffect(() => { if (!hasLoaded.current) return; persist("renameHistory", renameHistory); }, [renameHistory]);
 
@@ -242,6 +412,13 @@ export default function App() {
     setVizardProjects((prev) => [...prev, project]);
   }, []);
 
+  const handleImportProject = useCallback((project) => {
+    setVizardProjects((prev) => {
+      if (prev.some((p) => String(p.id) === String(project.id))) return prev;
+      return [...prev, project];
+    });
+  }, []);
+
   const handlePollProject = useCallback(async (projectId) => {
     if (!window.clipflow?.vizardQueryProject) return;
     try {
@@ -251,27 +428,17 @@ export default function App() {
         return;
       }
 
-      if (result.code === 2000 && result.data) {
-        // Project complete — extract clips
-        const videos = result.data.videos || [];
-        const clips = videos.map((v, i) => ({
-          id: `${projectId}-clip-${i}`,
-          videoId: v.videoId || null,
-          title: v.title || "Untitled Clip",
-          videoUrl: v.videoUrl || "",
-          viralScore: v.viralScore || 0,
-          viralReason: v.viralReason || "",
-          duration: Math.round((v.videoMsDuration || v.duration || 0) / (v.videoMsDuration ? 1000 : 1)),
-          transcript: v.transcript || "",
-          status: "none",
+      // Vizard API returns data at top level: { code, videos, projectName, projectId }
+      if (result.code === 2000 && result.videos) {
+        // Project complete — extract clips, deduplicate, preserve user edits
+        setVizardProjects((prev) => prev.map((p) => {
+          if (p.id !== String(projectId)) return p;
+          const clips = mapVizardClips(result.videos, p.clips || []);
+          return { ...p, status: "ready", clips, progress: 100 };
         }));
-
-        setVizardProjects((prev) => prev.map((p) =>
-          p.id === String(projectId) ? { ...p, status: "ready", clips, progress: 100 } : p
-        ));
       } else if (result.code === 1000) {
         // Still processing
-        const prog = result.data?.progress || null;
+        const prog = result.progress || null;
         setVizardProjects((prev) => prev.map((p) =>
           p.id === String(projectId) ? { ...p, progress: prog || p.progress } : p
         ));
@@ -404,15 +571,19 @@ export default function App() {
           onEditGame={handleEditGame}
           watchFolder={watchFolder}
           setWatchFolder={setWatchFolder}
-          ignoredProcesses={ignoredProcesses}
-          setIgnoredProcesses={setIgnoredProcesses}
           platforms={platforms}
           setPlatforms={setPlatforms}
           r2Config={r2Config}
           setR2Config={setR2Config}
           vizardApiKey={vizardApiKey}
           setVizardApiKey={setVizardApiKey}
+          downloadPath={downloadPath}
+          setDownloadPath={setDownloadPath}
+          vizardProjects={vizardProjects}
           onResetUploads={handleResetUploads}
+          downloadedClips={downloadedClips}
+          setDownloadedClips={setDownloadedClips}
+          onRefreshProject={handlePollProject}
         />
       );
     }
@@ -426,6 +597,7 @@ export default function App() {
             vizardProjects={vizardProjects}
             onSelect={(p) => { setSelProj(p); setView("clips"); }}
             onPollProject={handlePollProject}
+            onImportProject={handleImportProject}
             mainGame={mainGame}
             gamesDb={gamesDb}
           />
@@ -446,6 +618,7 @@ export default function App() {
         vizardProjects={vizardProjects}
         onSelect={(p) => { setSelProj(p); setView("clips"); }}
         onPollProject={handlePollProject}
+        onImportProject={handleImportProject}
         mainGame={mainGame}
         gamesDb={gamesDb}
       />
@@ -453,17 +626,17 @@ export default function App() {
   };
 
   return (
-    <div style={{ background: T.bg, height: "100vh", overflow: "hidden", color: T.text, fontFamily: T.font, display: "flex", flexDirection: "column", border: "1px solid rgba(255,255,255,0.08)" }}>
+    <div style={{ background: T.bg, height: "100vh", overflow: "hidden", color: T.text, fontFamily: T.font, display: "flex", flexDirection: "column", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8 }}>
       {/* Draggable title bar */}
-      <div className="titlebar-drag" style={{ height: 36, flexShrink: 0, background: "rgba(10,11,16,0.8)" }} />
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      <div className="titlebar-drag" style={{ height: 36, flexShrink: 0, background: "rgba(10,11,16,0.8)", borderRadius: "8px 8px 0 0" }} />
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", borderRadius: "0 0 8px 8px" }}>
         <Sidebar
           navItems={navItems}
           activeView={view === "clips" ? "projects" : view}
           onNavigate={nav}
           mainGame={mainGame}
         />
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <div style={{ flex: 1, overflow: "auto", scrollbarGutter: "stable" }}>
           <div style={{ padding: "32px 40px", maxWidth: view === "upload" ? "none" : 860, margin: "0 auto" }}>
             {renderView()}
           </div>
