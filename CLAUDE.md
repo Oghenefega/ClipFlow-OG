@@ -3,6 +3,40 @@
 ## Git Workflow
 Always commit and push directly to main. Do not create pull requests or feature branches.
 
+## Workflow Orchestration
+
+### Plan Mode
+- Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions).
+- If something goes sideways, STOP and re-plan immediately — don't keep pushing.
+- Write detailed specs upfront to reduce ambiguity.
+
+### Subagents
+- Use subagents (Task tool) to keep the main context window clean.
+- Offload research, exploration, and parallel analysis to subagents.
+- One task per subagent for focused execution.
+
+### Self-Improvement Loop
+- After ANY correction from the user: update `tasks/lessons.md` with the pattern.
+- Write rules that prevent the same mistake from recurring.
+- Review `tasks/lessons.md` at session start.
+
+### Verification Before Done
+- Never mark a task complete without proving it works (build, test, demonstrate).
+- Ask yourself: "Would a staff engineer approve this?"
+
+### Task Management
+1. **Plan First**: Write plan to `tasks/todo.md` with checkable items.
+2. **Track Progress**: Mark items complete as you go.
+3. **Explain Changes**: High-level summary at each step.
+4. **Capture Lessons**: Update `tasks/lessons.md` after corrections.
+
+### Core Principles
+- **Simplicity First**: Make every change as simple as possible. Minimal code impact.
+- **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
+- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+- **Demand Elegance (Balanced)**: For non-trivial changes, pause and ask "is there a more elegant way?" Skip this for simple, obvious fixes.
+- **Autonomous Bug Fixing**: When given a bug report, just fix it. Point at logs/errors, then resolve. Zero hand-holding required.
+
 ## What This Project Is
 
 ClipFlow is an **Electron + React** desktop app for a gaming content creator named **Fega**. It automates the full pipeline from OBS recording to published short-form clips across YouTube Shorts, TikTok, Instagram Reels, and Facebook Reels.
@@ -49,6 +83,9 @@ ClipFlow/
 │   │   └── styles/
 │   │       └── theme.js       ← Design tokens
 │   └── index.js
+├── tasks/
+│   ├── todo.md                ← Task tracker (plan, progress, review)
+│   └── lessons.md             ← Lessons learned from corrections
 ├── package.json
 ├── .gitignore
 └── CLAUDE.md                  ← THIS FILE
