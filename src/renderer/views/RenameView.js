@@ -6,6 +6,7 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
   const [subTab, setSubTab] = useState("pending");
   const [renaming, setRenaming] = useState(false);
   const [renameDone, setRenameDone] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [manageFolder, setManageFolder] = useState("2026-03");
   const [manageSelected, setManageSelected] = useState(new Set());
   const [batchAction, setBatchAction] = useState(null);
@@ -60,16 +61,19 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
   }, [managedFiles]);
 
   // Recalculate pending DAY numbers when gamesDb changes (e.g. user edits dayCount in Settings)
+  // Also runs on mount to fix stale values from before component was unmounted
   const prevGamesRef = useRef(null);
   useEffect(() => {
-    if (!prevGamesRef.current) { prevGamesRef.current = gamesDb; return; }
-    // Check if any dayCount actually changed
-    const changed = gamesDb.some((g) => {
-      const prev = prevGamesRef.current.find((p) => p.tag === g.tag);
-      return prev && (prev.dayCount !== g.dayCount || prev.lastDayDate !== g.lastDayDate);
-    });
+    const isFirstMount = !prevGamesRef.current;
+    if (!isFirstMount) {
+      // Check if any dayCount actually changed
+      const changed = gamesDb.some((g) => {
+        const prev = prevGamesRef.current.find((p) => p.tag === g.tag);
+        return prev && (prev.dayCount !== g.dayCount || prev.lastDayDate !== g.lastDayDate);
+      });
+      if (!changed) { prevGamesRef.current = gamesDb; return; }
+    }
     prevGamesRef.current = gamesDb;
-    if (!changed) return;
 
     setPendingRenames((prev) => {
       if (prev.length === 0) return prev;
@@ -95,40 +99,43 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
 
   const detectForGame = (game, fileName, currentPending) => {
     const fileDate = fileName.slice(0, 10);
+    const baseDayCount = game.dayCount || 0;
+    const baseLastDate = game.lastDayDate || null;
 
-    // Get effective day state: stored dayCount + any already-detected pending files
-    let effectiveDayCount = game.dayCount || 0;
-    let effectiveLastDate = game.lastDayDate || null;
+    // Build a date→day mapping using only stored dayCount + file dates (never trust pending day values)
+    const dateToDay = {};
+    if (baseLastDate) dateToDay[baseLastDate] = baseDayCount;
+
+    // Collect unique dates from pending files for this game + this file
+    const allDates = new Set();
+    if (baseLastDate) allDates.add(baseLastDate);
     (currentPending || []).forEach((p) => {
-      if (p.tag === game.tag) {
-        const pDate = p.fileName.slice(0, 10);
-        if (p.day > effectiveDayCount) {
-          effectiveDayCount = p.day;
-          effectiveLastDate = pDate;
-        } else if (p.day === effectiveDayCount && (!effectiveLastDate || pDate > effectiveLastDate)) {
-          effectiveLastDate = pDate;
-        }
-      }
+      if (p.tag === game.tag) allDates.add(p.fileName.slice(0, 10));
     });
+    allDates.add(fileDate);
 
-    // Determine day number
-    let day;
-    if (effectiveLastDate && fileDate === effectiveLastDate) {
-      // Same date as last recording — same day number
-      day = effectiveDayCount;
-    } else if (!effectiveLastDate || fileDate > effectiveLastDate) {
-      // New date (later than last recording) — new day
-      day = effectiveDayCount + 1;
-    } else {
-      // Older date — use current dayCount (user can manually fix if needed)
-      day = effectiveDayCount;
+    // Process dates chronologically, assigning day numbers
+    let runningDay = baseDayCount;
+    let runningLastDate = baseLastDate;
+    for (const d of [...allDates].sort()) {
+      if (dateToDay[d] !== undefined) continue; // Already mapped (e.g., baseLastDate)
+      if (!runningLastDate || d > runningLastDate) {
+        runningDay++;
+        dateToDay[d] = runningDay;
+        runningLastDate = d;
+      } else {
+        // Date older than or equal to stored lastDate — use base dayCount
+        dateToDay[d] = baseDayCount;
+      }
     }
+
+    const day = dateToDay[fileDate] !== undefined ? dateToDay[fileDate] : baseDayCount + 1;
 
     // Determine part number from all sources
     const existingParts = [
       ...managedFiles.filter((f) => f.tag === game.tag && f.name.startsWith(fileDate) && f.day === day).map((f) => f.part),
       ...renameHistory.filter((h) => !h.undone && h.tag === game.tag && h.newName.startsWith(fileDate)).map((h) => h.part),
-      ...(currentPending || []).filter((p) => p.tag === game.tag && p.fileName.slice(0, 10) === fileDate && p.day === day).map((p) => p.part),
+      ...(currentPending || []).filter((p) => p.tag === game.tag && p.fileName.slice(0, 10) === fileDate).map((p) => p.part),
     ];
     const part = existingParts.length > 0 ? Math.max(...existingParts) + 1 : 1;
 
@@ -246,7 +253,11 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
 
   const refresh = () => {
     if (isElectron) {
-      window.clipflow.stopWatching().then(() => window.clipflow.startWatching(watchFolder));
+      setRefreshing(true);
+      window.clipflow.stopWatching().then(() => {
+        window.clipflow.startWatching(watchFolder);
+        setTimeout(() => setRefreshing(false), 1200);
+      });
     }
   };
 
@@ -285,7 +296,7 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
     <div>
       <PageHeader title="Rename" subtitle="OBS recordings → structured names">
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={refresh} style={{ padding: "8px 14px", borderRadius: T.radius.md, border: `1px solid ${T.border}`, background: "rgba(255,255,255,0.03)", color: T.textSecondary, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>🔄 Refresh</button>
+          <button onClick={refresh} disabled={refreshing} style={{ padding: "8px 14px", borderRadius: T.radius.md, border: `1px solid ${refreshing ? T.greenBorder : T.border}`, background: refreshing ? T.greenDim : "rgba(255,255,255,0.03)", color: refreshing ? T.green : T.textSecondary, fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", fontFamily: T.font, transition: "all 0.3s ease" }}>{refreshing ? "✓ Refreshed" : "🔄 Refresh"}</button>
           <button onClick={onAddGame} style={{ padding: "8px 14px", borderRadius: T.radius.md, border: `1px solid ${T.accentBorder}`, background: T.accentDim, color: T.accentLight, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>+ Add Game</button>
         </div>
       </PageHeader>
@@ -426,7 +437,6 @@ export default function RenameView({ gamesDb, mainGameName, pendingRenames, setP
         )}
       </div>
 
-      <div style={{ marginTop: 16 }}><InfoBanner color={T.yellow} icon="⚠️">Files are never auto-renamed. Review game, day & part, then hit Rename.</InfoBanner></div>
     </div>
   );
 }
