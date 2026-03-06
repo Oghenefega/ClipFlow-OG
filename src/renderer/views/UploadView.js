@@ -166,6 +166,36 @@ export default function UploadView({ watchFolder, gamesDb = [], onCreateProject,
   };
 
 
+  // Mark selected files as uploaded without actually uploading (for files already processed externally)
+  const markAsUploaded = () => {
+    const toMark = Object.keys(selected)
+      .filter((k) => selected[k] && !isFileDone(parseInt(k)) && !uploadedFiles[files[parseInt(k)]?.name])
+      .map((k) => parseInt(k));
+    if (toMark.length === 0) return;
+    setUploadedFiles((prev) => {
+      const next = { ...prev };
+      toMark.forEach((idx) => {
+        const file = files[idx];
+        if (file) next[file.name] = { uploadedAt: Date.now(), url: null, manual: true };
+      });
+      if (window.clipflow?.storeSet) window.clipflow.storeSet("uploadedFiles", next);
+      return next;
+    });
+    setSelected({});
+  };
+
+  // Unmark a manually-marked file (only works for manual entries, not real uploads)
+  const unmarkFile = (i) => {
+    const f = files[i];
+    if (!f || !uploadedFiles[f.name] || !uploadedFiles[f.name].manual) return;
+    setUploadedFiles((prev) => {
+      const next = { ...prev };
+      delete next[f.name];
+      if (window.clipflow?.storeSet) window.clipflow.storeSet("uploadedFiles", next);
+      return next;
+    });
+  };
+
   const grouped = {};
   files.forEach((f, i) => { if (!grouped[f.folder]) grouped[f.folder] = []; grouped[f.folder].push({ file: f, index: i }); });
 
@@ -298,8 +328,17 @@ export default function UploadView({ watchFolder, gamesDb = [], onCreateProject,
                                 <span style={{ padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, color: T.yellow, background: T.yellowDim, flexShrink: 0 }}>VIZARD</span>
                               )}
                               {isDone && !isUp && status !== "vizard-creating" && (
-                                <span style={{ padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, textTransform: "uppercase", color: T.green, background: T.greenDim, flexShrink: 0 }}>
-                                  {"\u2713"}
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700, textTransform: "uppercase", color: T.green, background: T.greenDim, flexShrink: 0 }}>
+                                  {wasUploaded?.manual ? "MANUAL" : "\u2713"}
+                                  {wasUploaded?.manual && (
+                                    <span
+                                      onClick={(e) => { e.stopPropagation(); unmarkFile(i); }}
+                                      title="Unmark as uploaded"
+                                      style={{ cursor: "pointer", color: T.textMuted, fontSize: 10, fontWeight: 700, marginLeft: 2, lineHeight: 1 }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.color = T.red; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.color = T.textMuted; }}
+                                    >{"\u00d7"}</span>
+                                  )}
                                 </span>
                               )}
                               {isError && (
@@ -315,10 +354,23 @@ export default function UploadView({ watchFolder, gamesDb = [], onCreateProject,
               );
             })}
 
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center" }}>
               <PrimaryButton onClick={upload} disabled={selCount === 0 || uploading}>
                 {uploading ? "Uploading..." : selCount > 0 ? `Upload ${selCount} File${selCount > 1 ? "s" : ""} to R2` : "Select Files"}
               </PrimaryButton>
+              {selCount > 0 && !uploading && (
+                <button onClick={markAsUploaded} style={{
+                  padding: "10px 18px", borderRadius: T.radius.md,
+                  border: `1px solid ${T.greenBorder}`, background: "rgba(52,211,153,0.08)",
+                  color: T.green, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: T.font,
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(52,211,153,0.15)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(52,211,153,0.08)"; }}
+                >
+                  Mark {selCount} as Uploaded
+                </button>
+              )}
             </div>
           </>
         )}
