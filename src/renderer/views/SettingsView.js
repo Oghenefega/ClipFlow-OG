@@ -298,7 +298,7 @@ function DownloadsSection({ downloadPath, setDownloadPath, vizardProjects, downl
   );
 }
 
-export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, platforms, setPlatforms, r2Config, setR2Config, vizardApiKey, setVizardApiKey, downloadPath, setDownloadPath, vizardProjects, onResetUploads, downloadedClips, setDownloadedClips, onRefreshProject }) {
+export default function SettingsView({ mainGame, setMainGame, mainPool, setMainPool, gamesDb, setGamesDb, onEditGame, watchFolder, setWatchFolder, platforms, setPlatforms, r2Config, setR2Config, vizardApiKey, setVizardApiKey, downloadPath, setDownloadPath, vizardProjects, onResetUploads, downloadedClips, setDownloadedClips, onRefreshProject, anthropicApiKey, setAnthropicApiKey, styleGuide, setStyleGuide }) {
   const [editFolder, setEditFolder] = useState(false);
   const [folderVal, setFolderVal] = useState(watchFolder);
   const [editGD, setEditGD] = useState(null);
@@ -316,6 +316,13 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
   const [copiedField, setCopiedField] = useState(null);
   const [showR2, setShowR2] = useState(false);
   const [showVizard, setShowVizard] = useState(false);
+  const [showAnthropic, setShowAnthropic] = useState(false);
+  const [editAnthropic, setEditAnthropic] = useState(false);
+  const [anthropicVal, setAnthropicVal] = useState(anthropicApiKey || "");
+  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
+  const [showAnthropicKeyEdit, setShowAnthropicKeyEdit] = useState(false);
+  const [editGuide, setEditGuide] = useState(false);
+  const [guideVal, setGuideVal] = useState(styleGuide || "");
 
   const copyToClipboard = (value, fieldName) => {
     if (!value) return;
@@ -341,6 +348,7 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
 
   const r2Configured = Boolean(r2Config?.accessKeyId);
   const vizardConfigured = Boolean(vizardApiKey);
+  const anthropicConfigured = Boolean(anthropicApiKey);
 
   const collapsibleHeaderStyle = {
     display: "flex",
@@ -599,6 +607,102 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         )}
       </Card>
 
+      {/* Anthropic API — Collapsible */}
+      <Card style={{ padding: 24, marginBottom: 16 }}>
+        <div
+          onClick={() => { if (!editAnthropic) setShowAnthropic(!showAnthropic); }}
+          style={collapsibleHeaderStyle}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Anthropic AI</div>
+            <span style={{ color: T.textTertiary, fontSize: 14, transition: "transform 0.2s", display: "inline-block", transform: showAnthropic ? "rotate(90deg)" : "none" }}>{"\u25b8"}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {!showAnthropic && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <PulseDot color={anthropicConfigured ? T.green : T.red} size={6} />
+                <span style={{ color: anthropicConfigured ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>
+                  {anthropicConfigured ? "Configured" : "Not set"}
+                </span>
+              </div>
+            )}
+            {showAnthropic && !editAnthropic && (
+              <button onClick={(e) => { e.stopPropagation(); setEditAnthropic(true); setAnthropicVal(anthropicApiKey || ""); setShowAnthropic(true); }} style={btnSecondary}>Edit</button>
+            )}
+            {editAnthropic && (
+              <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => setEditAnthropic(false)} style={btnSecondary}>Cancel</button>
+                <button onClick={() => { setAnthropicApiKey(anthropicVal); setEditAnthropic(false); }} style={btnSave}>Save</button>
+              </div>
+            )}
+          </div>
+        </div>
+        {(showAnthropic || editAnthropic) && (
+          <div style={{ marginTop: 14 }}>
+            {editAnthropic ? (
+              <div>
+                <SectionLabel>API Key</SectionLabel>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                  <input value={anthropicVal} onChange={(e) => setAnthropicVal(e.target.value)} type={showAnthropicKeyEdit ? "text" : "password"} style={{ ...inputStyle, flex: 1 }} placeholder="sk-ant-..." />
+                  <button onClick={() => setShowAnthropicKeyEdit(!showAnthropicKeyEdit)} style={{ ...iconBtn, color: T.textTertiary }} title={showAnthropicKeyEdit ? "Hide" : "Show"}>{showAnthropicKeyEdit ? "\ud83d\udc41" : "\ud83d\udc41\u200d\ud83d\udde8"}</button>
+                </div>
+                <p style={{ color: T.textTertiary, fontSize: 11, margin: "8px 0 0" }}>Used for AI title/caption generation (Sonnet) and game research (Opus).</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: T.textTertiary, fontSize: 12, width: 80 }}>API Key</span>
+                  <span style={{ color: T.text, fontSize: 13, fontFamily: T.mono, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {!anthropicApiKey ? "Not set" : showAnthropicKey ? anthropicApiKey : maskKey(anthropicApiKey)}
+                  </span>
+                  {anthropicApiKey && (
+                    <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                      <button onClick={() => setShowAnthropicKey(!showAnthropicKey)} style={{ ...iconBtn, color: T.textTertiary }} title={showAnthropicKey ? "Hide" : "Show"}>{showAnthropicKey ? "\ud83d\udc41" : "\ud83d\udc41\u200d\ud83d\udde8"}</button>
+                      <button onClick={() => copyToClipboard(anthropicApiKey, "anthropic-key")} style={{ ...iconBtn, color: copiedField === "anthropic-key" ? T.green : T.textTertiary }}>
+                        {copiedField === "anthropic-key" ? "\u2713" : "\ud83d\udccb"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ color: T.textTertiary, fontSize: 12, width: 80 }}>Status</span>
+                  <PulseDot color={anthropicConfigured ? T.green : T.red} size={6} />
+                  <span style={{ color: anthropicConfigured ? T.green : T.red, fontSize: 12, fontWeight: 600 }}>{anthropicConfigured ? "Configured" : "Not set"}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* Title & Caption Style Guide */}
+      <Card style={{ padding: 24, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ color: T.textSecondary, fontSize: 14, fontWeight: 700 }}>Title & Caption Style Guide</div>
+          {!editGuide ? (
+            <button onClick={() => { setEditGuide(true); setGuideVal(styleGuide || ""); }} style={btnSecondary}>Edit</button>
+          ) : (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setEditGuide(false)} style={btnSecondary}>Cancel</button>
+              <button onClick={() => { setStyleGuide(guideVal); setEditGuide(false); }} style={btnSave}>Save</button>
+            </div>
+          )}
+        </div>
+        {editGuide ? (
+          <textarea
+            value={guideVal}
+            onChange={(e) => setGuideVal(e.target.value)}
+            rows={8}
+            placeholder="Paste your YouTube titling best practices, rules, and preferences here. This will be included in every AI generation call as context."
+            style={{ ...inputStyle, resize: "vertical", minHeight: 120, lineHeight: 1.5 }}
+          />
+        ) : styleGuide ? (
+          <p style={{ color: T.textTertiary, fontSize: 12, margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.6, maxHeight: 120, overflow: "auto" }}>{styleGuide}</p>
+        ) : (
+          <p style={{ color: T.textMuted, fontSize: 12, margin: 0, fontStyle: "italic" }}>No style guide set. Click Edit to paste your titling rules and preferences.</p>
+        )}
+      </Card>
+
       {/* Upload History / Reset */}
       <Card style={{ padding: 24, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -626,7 +730,7 @@ export default function SettingsView({ mainGame, setMainGame, mainPool, setMainP
         onRefreshProject={onRefreshProject}
       />
 
-      {editGD && <GameEditModal game={editGD} onSave={(g) => { onEditGame(g); setEditGD(null); setSelGameLib(null); }} onClose={() => { setEditGD(null); setSelGameLib(null); }} />}
+      {editGD && <GameEditModal game={editGD} onSave={(g) => { onEditGame(g); setEditGD(null); setSelGameLib(null); }} onClose={() => { setEditGD(null); setSelGameLib(null); }} anthropicApiKey={anthropicApiKey} />}
     </div>
   );
 }

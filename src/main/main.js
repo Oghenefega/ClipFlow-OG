@@ -58,6 +58,9 @@ const store = new Store({
     vizardProjects: [],
     uploadedFiles: {},
     renameHistory: [],
+    anthropicApiKey: "",
+    styleGuide: "",
+    titleCaptionHistory: [],
   },
 });
 
@@ -538,6 +541,194 @@ ipcMain.handle("vizard:generateCaption", async (_, options) => {
       tone: options.tone || "interesting",
     });
     return result;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// ============ ANTHROPIC AI API ============
+const anthropicRequest = (apiKey, body) => {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const options = {
+      hostname: "api.anthropic.com",
+      path: "/v1/messages",
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error(`Failed to parse Anthropic response: ${data.substring(0, 300)}`)); }
+      });
+    });
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+};
+
+// Generate titles & captions for a clip using Sonnet
+ipcMain.handle("anthropic:generate", async (_, params) => {
+  try {
+    const apiKey = store.get("anthropicApiKey");
+    if (!apiKey) return { error: "Anthropic API key not configured. Go to Settings." };
+
+    const styleGuide = store.get("styleGuide") || "";
+    const history = store.get("titleCaptionHistory") || [];
+
+    // Build style history context: last 20 picks and 20 rejections
+    const picks = history.filter((h) => h.type === "pick").slice(-20);
+    const rejects = history.filter((h) => h.type === "reject").slice(-20);
+
+    let styleHistory = "";
+    if (picks.length > 0) {
+      styleHistory += "\n\n## Creator's Past Picks (titles & captions they chose):\n";
+      picks.forEach((p, i) => {
+        styleHistory += `${i + 1}. Title: "${p.titleChosen}" | Caption: "${p.captionChosen}"${p.game ? ` [${p.game}]` : ""}\n`;
+      });
+    }
+    if (rejects.length > 0) {
+      styleHistory += "\n\n## Creator's Past Rejections (titles & captions they passed on):\n";
+      rejects.forEach((r, i) => {
+        styleHistory += `${i + 1}. ${r.titleRejected ? `Title: "${r.titleRejected}"` : `Caption: "${r.captionRejected}"`}${r.game ? ` [${r.game}]` : ""}\n`;
+      });
+    }
+
+    // Build game context
+    let gameContext = "";
+    if (params.gameContextAuto) gameContext += `\n\n## Game Knowledge (auto-researched):\n${params.gameContextAuto}`;
+    if (params.gameContextUser) gameContext += `\n\n## Creator's Play Style for ${params.gameName}:\n${params.gameContextUser}`;
+
+    const systemPrompt = `You are a YouTube Shorts / TikTok title and caption specialist for a gaming content creator named Fega.
+
+Your job is to generate 5 title options and 5 caption options for a gaming clip based on its transcript.
+
+## IMPORTANT — Title vs Caption Definitions:
+
+**TITLE** = The video's title on the platform (YouTube Shorts, TikTok, Instagram Reels). This is what shows in the feed listing and search results. Titles should:
+- Be short, punchy, and optimized for discoverability
+- Include relevant hashtags naturally (e.g. "My Chess Rating is EMBARRASSING #arcraiders #gaming")
+- Work as standalone text that makes someone want to click/watch
+
+**CAPTION** = Scroll-stopping hook text that is BAKED INTO the video as a visible text overlay. This is the FIRST thing viewers read while scrolling through their feed. Captions must:
+- Be extremely punchy and short (1-2 lines max, under 15 words ideal)
+- Create an immediate emotional reaction — curiosity, shock, humor, or relatability
+- Use bold, direct language. Think "I lost 12 games in ONE NIGHT 💀" not a paragraph
+- Never include hashtags (those go in the title)
+- Make someone STOP SCROLLING before they even hear the audio
+
+## Rules:
+- Generate titles and captions as complementary pairs (title 1 pairs with caption 1, etc.) but the creator may mix and match
+- Each title's "why" should explain why it will perform well for search/discovery
+- Each caption's "why" MUST explain the specific psychological trigger that makes someone stop scrolling — name the trigger (curiosity gap, shock value, relatability, FOMO, controversy, self-deprecation, etc.)
+- Analyze the creator's past picks vs rejections to understand their style preferences — don't just mimic, understand the PATTERNS (tone, perspective, length, humor style)
+
+${styleGuide ? `## Creator's Style Guide:\n${styleGuide}` : ""}${gameContext}${styleHistory}
+
+## Output Format:
+Return ONLY valid JSON in this exact structure:
+{
+  "titles": [
+    { "title": "the video title with #hashtags", "why": "why this title works for discovery" },
+    ...5 total
+  ],
+  "captions": [
+    { "caption": "short scroll-stopping hook text", "why": "what psychological trigger makes this stop scrolling" },
+    ...5 total
+  ]
+}`;
+
+    let userMessage = `## Clip Transcript:\n${params.transcript || "(no transcript available)"}`;
+    if (params.projectName) userMessage += `\n\n## Project/Game: ${params.projectName}`;
+    if (params.userContext) userMessage += `\n\n## Additional Context from Creator:\n${params.userContext}`;
+    if (params.rejectedSuggestions && params.rejectedSuggestions.length > 0) {
+      userMessage += `\n\n## Previously Rejected Suggestions (avoid similar patterns):\n`;
+      params.rejectedSuggestions.forEach((r) => {
+        // Handle both string format (from sessionRejections) and object format
+        const text = typeof r === "string" ? r : (r.text || r.title || r.caption || "");
+        userMessage += `- "${text}"\n`;
+      });
+    }
+
+    const result = await anthropicRequest(apiKey, {
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+    });
+
+    // Parse the response — extract JSON from the text content
+    if (result.error) return { error: result.error.message || JSON.stringify(result.error) };
+    if (!result.content || result.content.length === 0) return { error: "Empty response from Anthropic" };
+
+    const textContent = result.content.find((c) => c.type === "text");
+    if (!textContent) return { error: "No text in Anthropic response" };
+
+    // Extract JSON from the response (may have markdown code fences)
+    let jsonStr = textContent.text;
+    const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) jsonStr = jsonMatch[1];
+    jsonStr = jsonStr.trim();
+
+    try {
+      const parsed = JSON.parse(jsonStr);
+      return { success: true, data: parsed };
+    } catch (e) {
+      return { error: `Failed to parse AI response as JSON: ${e.message}`, raw: textContent.text };
+    }
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Research a game using Opus with web search (one-time per game)
+ipcMain.handle("anthropic:researchGame", async (_, gameName) => {
+  try {
+    const apiKey = store.get("anthropicApiKey");
+    if (!apiKey) return { error: "Anthropic API key not configured. Go to Settings." };
+
+    const result = await anthropicRequest(apiKey, {
+      model: "claude-opus-4-6",
+      max_tokens: 4000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      system: "You are a gaming research assistant. Your job is to build a comprehensive context profile about a video game for a gaming content creator. Use web search to find current information.",
+      messages: [{
+        role: "user",
+        content: `Research the game "${gameName}" and provide a comprehensive summary covering:\n\n1. What the game is (genre, developer, release date/status)\n2. Core gameplay mechanics and loop\n3. Community lingo and terminology players use\n4. Meme-worthy aspects, common jokes, funny situations\n5. Tone of the community (competitive? casual? toxic? wholesome?)\n6. What makes good short-form content from this game\n7. Popular content creator angles for this game\n\nProvide the summary as a cohesive text paragraph (not bullet points) that can be used as context for generating YouTube Shorts titles and captions.`,
+      }],
+    });
+
+    if (result.error) return { error: result.error.message || JSON.stringify(result.error) };
+    if (!result.content || result.content.length === 0) return { error: "Empty response from Anthropic" };
+
+    // Extract the final text response (may have tool_use blocks before it)
+    const textBlocks = result.content.filter((c) => c.type === "text");
+    const summary = textBlocks.map((t) => t.text).join("\n\n");
+
+    if (!summary) return { error: "No text summary in research response" };
+    return { success: true, data: summary };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+// Log a pick or rejection to the title/caption history
+ipcMain.handle("anthropic:logHistory", async (_, entry) => {
+  try {
+    const history = store.get("titleCaptionHistory") || [];
+    history.push({ ...entry, timestamp: new Date().toISOString() });
+    // Keep history bounded to last 200 entries to prevent unbounded growth
+    const bounded = history.length > 200 ? history.slice(-200) : history;
+    store.set("titleCaptionHistory", bounded);
+    return { success: true };
   } catch (err) {
     return { error: err.message };
   }
