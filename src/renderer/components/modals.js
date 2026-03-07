@@ -96,16 +96,41 @@ export const AddGameModal = ({ exe, onConfirm, onDismiss, onIgnore }) => {
 };
 
 // ============ GAME EDIT MODAL ============
-export const GameEditModal = ({ game, onSave, onClose }) => {
+export const GameEditModal = ({ game, onSave, onClose, anthropicApiKey }) => {
   const [tag, setTag] = useState(game.tag);
   const [hashtag, setHashtag] = useState(game.hashtag || "");
   const [color, setColor] = useState(game.color);
   const [dayCount, setDayCount] = useState(game.dayCount || 0);
   const [active, setActive] = useState(game.active !== false);
+  const [aiPlayStyle, setAiPlayStyle] = useState(game.aiContextUser || "");
+  const [aiAutoContext, setAiAutoContext] = useState(game.aiContextAuto || "");
+  const [aiResearchedAt, setAiResearchedAt] = useState(game.aiResearchedAt || "");
+  const [researching, setResearching] = useState(false);
+  const [researchError, setResearchError] = useState("");
+  const [showAiSection, setShowAiSection] = useState(false);
+
+  const handleResearch = async () => {
+    if (!anthropicApiKey) return;
+    setResearching(true);
+    setResearchError("");
+    try {
+      const result = await window.clipflow.anthropicResearchGame(game.name);
+      if (result.success) {
+        setAiAutoContext(result.data);
+        setAiResearchedAt(new Date().toISOString());
+      } else {
+        setResearchError(result.error || "Research failed");
+      }
+    } catch (err) {
+      setResearchError(err.message || "Research failed");
+    } finally {
+      setResearching(false);
+    }
+  };
 
   return (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: T.radius.xl, padding: 28, maxWidth: 420, width: "100%", border: `1px solid ${T.borderHover}` }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: T.radius.xl, padding: 28, maxWidth: 480, width: "100%", border: `1px solid ${T.borderHover}`, maxHeight: "85vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <h3 style={{ color: T.text, fontSize: 20, fontWeight: 800, margin: 0 }}>Edit {game.name}</h3>
           <button onClick={onClose} style={{ background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 8, padding: "8px 12px", color: T.textTertiary, cursor: "pointer" }}>✕</button>
@@ -132,7 +157,7 @@ export const GameEditModal = ({ game, onSave, onClose }) => {
           <SectionLabel>Color</SectionLabel>
           <div style={{ marginTop: 8 }}><ColorPicker value={color} onChange={setColor} /></div>
         </div>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 16 }}>
           <SectionLabel>Status</SectionLabel>
           <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
             <button onClick={() => setActive(true)} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${active ? T.greenBorder : T.border}`, background: active ? T.greenDim : "transparent", color: active ? T.green : T.textTertiary, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: T.font }}>Active</button>
@@ -140,9 +165,69 @@ export const GameEditModal = ({ game, onSave, onClose }) => {
           </div>
           <div style={{ color: T.textTertiary, fontSize: 11, marginTop: 4 }}>Inactive games are hidden from the tracker picker</div>
         </div>
+
+        {/* AI Context Section */}
+        <div style={{ marginBottom: 20, borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
+          <button onClick={() => setShowAiSection(!showAiSection)} style={{ display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", padding: 0, width: "100%" }}>
+            <span style={{ color: T.accentLight, fontSize: 14, fontWeight: 700 }}>AI Context</span>
+            <span style={{ color: T.textTertiary, fontSize: 11 }}>{showAiSection ? "▲" : "▼"}</span>
+            {(aiAutoContext || aiPlayStyle) && <span style={{ width: 6, height: 6, borderRadius: 3, background: T.green, marginLeft: "auto" }} />}
+          </button>
+
+          {showAiSection && (
+            <div style={{ marginTop: 14 }}>
+              {/* Play Style - user editable */}
+              <div style={{ marginBottom: 14 }}>
+                <SectionLabel>Your Play Style</SectionLabel>
+                <textarea
+                  value={aiPlayStyle}
+                  onChange={(e) => setAiPlayStyle(e.target.value)}
+                  placeholder={"How do you play this game?\ne.g. \"I'm grinding ranked, trying to hit Diamond. Very competitive but I rage in a funny way.\""}
+                  style={{ width: "100%", minHeight: 80, background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "12px 16px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", marginTop: 8, boxSizing: "border-box", resize: "vertical", lineHeight: 1.5 }}
+                />
+                <div style={{ color: T.textTertiary, fontSize: 11, marginTop: 4 }}>Included in AI title/caption generation for this game</div>
+              </div>
+
+              {/* Auto-researched context */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <SectionLabel>Game Knowledge (AI-Researched)</SectionLabel>
+                  <button
+                    onClick={handleResearch}
+                    disabled={researching || !anthropicApiKey}
+                    style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${anthropicApiKey ? T.accentBorder : T.border}`, background: anthropicApiKey ? T.accentDim : "transparent", color: anthropicApiKey ? T.accentLight : T.textTertiary, fontSize: 11, fontWeight: 600, cursor: anthropicApiKey ? "pointer" : "not-allowed", fontFamily: T.font, opacity: researching ? 0.6 : 1, whiteSpace: "nowrap" }}
+                  >
+                    {researching ? "Researching..." : aiAutoContext ? "Refresh" : "Research Game"}
+                  </button>
+                </div>
+                {!anthropicApiKey && (
+                  <div style={{ color: T.yellow, fontSize: 11, marginBottom: 6 }}>Add your Anthropic API key in Settings to enable game research</div>
+                )}
+                {researchError && (
+                  <div style={{ color: T.red, fontSize: 11, marginBottom: 6 }}>{researchError}</div>
+                )}
+                {aiAutoContext ? (
+                  <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: T.radius.md, padding: "12px 16px", color: T.textSecondary, fontSize: 12, lineHeight: 1.6, maxHeight: 120, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                    {aiAutoContext}
+                    {aiResearchedAt && (
+                      <div style={{ color: T.textTertiary, fontSize: 10, marginTop: 8, borderTop: `1px solid ${T.border}`, paddingTop: 6 }}>
+                        Researched: {new Date(aiResearchedAt).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: T.radius.md, padding: "16px", color: T.textTertiary, fontSize: 12, textAlign: "center" }}>
+                    No game knowledge yet. Click "Research Game" to auto-generate.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={onClose} style={{ flex: 1, padding: 14, borderRadius: T.radius.md, border: `1px solid ${T.border}`, background: "transparent", color: T.textSecondary, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: T.font }}>Cancel</button>
-          <button onClick={() => onSave({ ...game, tag, hashtag, color, dayCount, active })} style={{ flex: 2, padding: 14, borderRadius: T.radius.md, border: "none", background: T.accent, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save Changes</button>
+          <button onClick={() => onSave({ ...game, tag, hashtag, color, dayCount, active, aiContextUser: aiPlayStyle, aiContextAuto: aiAutoContext, aiResearchedAt })} style={{ flex: 2, padding: 14, borderRadius: T.radius.md, border: "none", background: T.accent, color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save Changes</button>
         </div>
       </div>
     </div>

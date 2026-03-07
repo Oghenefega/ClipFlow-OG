@@ -181,6 +181,10 @@ export default function App() {
   const [savedTemplates, setSavedTemplates] = useState([]); // [{ name, template }]
   const [mainGameHistory, setMainGameHistory] = useState([]); // [{ date, from, to }]
 
+  // AI Title & Caption Generator
+  const [anthropicApiKey, setAnthropicApiKey] = useState("");
+  const [styleGuide, setStyleGuide] = useState("");
+
   // Captions
   const [captionTemplates, setCaptionTemplates] = useState({
     tiktok: "{title} #{gametitle} #fyp #gamingontiktok #fega #fegagaming",
@@ -251,6 +255,8 @@ export default function App() {
         }
         if (all.uploadedFiles) setUploadedFiles(all.uploadedFiles);
         if (all.renameHistory) setRenameHistory(all.renameHistory);
+        if (all.anthropicApiKey) setAnthropicApiKey(all.anthropicApiKey);
+        if (all.styleGuide) setStyleGuide(all.styleGuide);
         // For ytDescriptions: merge real defaults with any saved overrides
         if (all.ytDescriptions && Object.keys(all.ytDescriptions).length > 0) {
           setYtDescriptions({ ...REAL_YT_DESCRIPTIONS, ...all.ytDescriptions });
@@ -375,6 +381,8 @@ export default function App() {
   useEffect(() => { if (!hasLoaded.current) return; persist("downloadedClips", downloadedClips); }, [downloadedClips]);
   useEffect(() => { if (!hasLoaded.current) return; persist("vizardProjects", vizardProjects); }, [vizardProjects]);
   useEffect(() => { if (!hasLoaded.current) return; persist("renameHistory", renameHistory); }, [renameHistory]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("anthropicApiKey", anthropicApiKey); }, [anthropicApiKey]);
+  useEffect(() => { if (!hasLoaded.current) return; persist("styleGuide", styleGuide); }, [styleGuide]);
 
   // ============ MAIN GAME SWITCH LOGGING ============
   const prevMainGame = useRef(null);
@@ -584,6 +592,10 @@ export default function App() {
           downloadedClips={downloadedClips}
           setDownloadedClips={setDownloadedClips}
           onRefreshProject={handlePollProject}
+          anthropicApiKey={anthropicApiKey}
+          setAnthropicApiKey={setAnthropicApiKey}
+          styleGuide={styleGuide}
+          setStyleGuide={setStyleGuide}
         />
       );
     }
@@ -610,6 +622,9 @@ export default function App() {
           onUpdateClip={handleUpdateClip}
           onTranscript={setTranscript}
           onEditClipTitle={handleEditClipTitle}
+          gamesDb={gamesDb}
+          anthropicApiKey={anthropicApiKey}
+          styleGuide={styleGuide}
         />
       );
     }

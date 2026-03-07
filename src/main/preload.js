@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld("clipflow", {
   vizardPublishClip: (options) => ipcRenderer.invoke("vizard:publishClip", options),
   vizardGenerateCaption: (options) => ipcRenderer.invoke("vizard:generateCaption", options),
 
+  // Anthropic AI
+  anthropicGenerate: (params) => ipcRenderer.invoke("anthropic:generate", params),
+  anthropicResearchGame: (gameName) => ipcRenderer.invoke("anthropic:researchGame", gameName),
+  anthropicLogHistory: (entry) => ipcRenderer.invoke("anthropic:logHistory", entry),
+
   // Downloads
   downloadClip: (url, savePath) => ipcRenderer.invoke("download:clip", url, savePath),
   onDownloadProgress: (callback) => {
