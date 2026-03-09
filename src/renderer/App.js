@@ -570,6 +570,7 @@ export default function App() {
           setYtDescriptions={setYtDescriptions}
           captionTemplates={captionTemplates}
           setCaptionTemplates={setCaptionTemplates}
+          gamesDb={gamesDb}
         />
       );
     }
