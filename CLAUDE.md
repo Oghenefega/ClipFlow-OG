@@ -454,6 +454,6 @@ ContentType: "video/mp4"   // or "video/x-matroska" for .mkv
 
 ## GitHub
 
-- Repo: https://github.com/Oghenefega/ClipFlow.git
+- Repo: https://github.com/Oghenefega/ClipFlow-OG.git
 - Branch: main
 - Private repository
