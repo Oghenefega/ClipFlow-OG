@@ -275,18 +275,34 @@ const GameDropdown = ({ value, onChange, projectGame, gamesDb = [] }) => {
 };
 
 // ============ GENERATION PANEL ============
-const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGuide, onEditClipTitle, onTitleHistory }) => {
+const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGuide, onEditClipTitle, onUpdateClipAiState, onTitleHistory }) => {
+  // Restore from persisted aiState on clip, or start fresh
+  const saved = clip.aiState || {};
   const [userContext, setUserContext] = useState("");
   const [themeOverride, setThemeOverride] = useState(""); // empty = project's game
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
-  const [suggestions, setSuggestions] = useState(null); // { titles: [{text, why, visible}], captions: [{text, why, visible}] }
-  const [selectedTitle, setSelectedTitle] = useState(null); // index
-  const [selectedCaption, setSelectedCaption] = useState(null); // index
-  const [appliedTitle, setAppliedTitle] = useState(null);
-  const [appliedCaption, setAppliedCaption] = useState(null);
-  const [sessionRejections, setSessionRejections] = useState([]); // rejected texts from this session
-  const [undoStack, setUndoStack] = useState([]); // [{type, ...data}]
+  const [suggestions, setSuggestions] = useState(saved.suggestions || null);
+  const [selectedTitle, setSelectedTitle] = useState(saved.selectedTitle ?? null);
+  const [selectedCaption, setSelectedCaption] = useState(saved.selectedCaption ?? null);
+  const [appliedTitle, setAppliedTitle] = useState(saved.appliedTitle || null);
+  const [appliedCaption, setAppliedCaption] = useState(saved.appliedCaption || null);
+  const [sessionRejections, setSessionRejections] = useState(saved.sessionRejections || []);
+  const [undoStack, setUndoStack] = useState([]); // [{type, ...data}] — not persisted (session-only)
+
+  // Persist AI state to clip whenever it changes
+  const persistAiState = (overrides = {}) => {
+    if (!onUpdateClipAiState) return;
+    const state = {
+      suggestions: overrides.suggestions !== undefined ? overrides.suggestions : suggestions,
+      selectedTitle: overrides.selectedTitle !== undefined ? overrides.selectedTitle : selectedTitle,
+      selectedCaption: overrides.selectedCaption !== undefined ? overrides.selectedCaption : selectedCaption,
+      appliedTitle: overrides.appliedTitle !== undefined ? overrides.appliedTitle : appliedTitle,
+      appliedCaption: overrides.appliedCaption !== undefined ? overrides.appliedCaption : appliedCaption,
+      sessionRejections: overrides.sessionRejections !== undefined ? overrides.sessionRejections : sessionRejections,
+    };
+    onUpdateClipAiState(project.id, clip.id, state);
+  };
 
   // Find game context for the active game
   const activeGameName = themeOverride || project.game || "Unknown";
@@ -314,22 +330,24 @@ const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGu
         const captions = (result.data.captions || []).map((c) => ({ text: c.caption || c.text || "", why: c.why || c.reason || "", visible: true }));
         if (suggestions) {
           // Regenerating — fill only empty (rejected) slots
-          setSuggestions((prev) => {
-            const newTitles = [...prev.titles];
-            const newCaptions = [...prev.captions];
-            let tIdx = 0, cIdx = 0;
-            for (let i = 0; i < newTitles.length; i++) {
-              if (!newTitles[i].visible && tIdx < titles.length) { newTitles[i] = titles[tIdx++]; }
-            }
-            while (newTitles.length < 5 && tIdx < titles.length) { newTitles.push(titles[tIdx++]); }
-            for (let i = 0; i < newCaptions.length; i++) {
-              if (!newCaptions[i].visible && cIdx < captions.length) { newCaptions[i] = captions[cIdx++]; }
-            }
-            while (newCaptions.length < 5 && cIdx < captions.length) { newCaptions.push(captions[cIdx++]); }
-            return { titles: newTitles, captions: newCaptions };
-          });
+          const newTitles = [...suggestions.titles];
+          const newCaptions = [...suggestions.captions];
+          let tIdx = 0, cIdx = 0;
+          for (let i = 0; i < newTitles.length; i++) {
+            if (!newTitles[i].visible && tIdx < titles.length) { newTitles[i] = titles[tIdx++]; }
+          }
+          while (newTitles.length < 5 && tIdx < titles.length) { newTitles.push(titles[tIdx++]); }
+          for (let i = 0; i < newCaptions.length; i++) {
+            if (!newCaptions[i].visible && cIdx < captions.length) { newCaptions[i] = captions[cIdx++]; }
+          }
+          while (newCaptions.length < 5 && cIdx < captions.length) { newCaptions.push(captions[cIdx++]); }
+          const updated = { titles: newTitles, captions: newCaptions };
+          setSuggestions(updated);
+          persistAiState({ suggestions: updated });
         } else {
-          setSuggestions({ titles, captions });
+          const fresh = { titles, captions };
+          setSuggestions(fresh);
+          persistAiState({ suggestions: fresh });
         }
       } else {
         setError(result.error || "Generation failed");
@@ -354,23 +372,39 @@ const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGu
         userContext: userContext.trim(),
       });
     } catch (_) { /* non-critical */ }
-    setSessionRejections((prev) => [...prev, item.text]);
+    const newRejections = [...sessionRejections, item.text];
+    setSessionRejections(newRejections);
     // Push to undo stack before hiding
     setUndoStack((prev) => [...prev, { type: "reject", category: type, index, item: { ...item } }]);
-    setSuggestions((prev) => {
-      const updated = [...prev[type]];
-      updated[index] = { ...updated[index], visible: false };
-      return { ...prev, [type]: updated };
-    });
+    const updatedItems = [...suggestions[type]];
+    updatedItems[index] = { ...updatedItems[index], visible: false };
+    const updatedSuggestions = { ...suggestions, [type]: updatedItems };
+    setSuggestions(updatedSuggestions);
+    persistAiState({ suggestions: updatedSuggestions, sessionRejections: newRejections });
   };
 
-  // Pick title → immediately apply as clip title
+  // Pick title → immediately apply as clip title (toggle: click again to deselect)
   const handlePickTitle = async (index) => {
     const item = suggestions.titles[index];
     if (!item || !item.visible) return;
+
+    // Deselect if already selected
+    if (selectedTitle === index) {
+      const originalTitle = undoStack.find((u) => u.type === "titleChange")?.oldTitle || clip.title;
+      setSelectedTitle(null);
+      setAppliedTitle(null);
+      persistAiState({ selectedTitle: null, appliedTitle: null });
+      if (onEditClipTitle) {
+        if (onTitleHistory) onTitleHistory({ clipId: clip.id, oldTitle: clip.title, newTitle: originalTitle });
+        onEditClipTitle(project.id, clip.id, originalTitle);
+      }
+      return;
+    }
+
     const oldTitle = clip.title;
     setSelectedTitle(index);
     setAppliedTitle(item.text);
+    persistAiState({ selectedTitle: index, appliedTitle: item.text });
     // Log pick
     try {
       await window.clipflow.anthropicLogHistory({
@@ -392,12 +426,22 @@ const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGu
     setUndoStack((prev) => [...prev, { type: "titleChange", clipId: clip.id, oldTitle, newTitle: item.text }]);
   };
 
-  // Pick caption → store locally (captions aren't part of clip metadata)
+  // Pick caption → store on clip aiState (toggle: click again to deselect)
   const handlePickCaption = async (index) => {
     const item = suggestions.captions[index];
     if (!item || !item.visible) return;
+
+    // Deselect if already selected
+    if (selectedCaption === index) {
+      setSelectedCaption(null);
+      setAppliedCaption(null);
+      persistAiState({ selectedCaption: null, appliedCaption: null });
+      return;
+    }
+
     setSelectedCaption(index);
     setAppliedCaption(item.text);
+    persistAiState({ selectedCaption: index, appliedCaption: item.text });
     // Log pick
     try {
       await window.clipflow.anthropicLogHistory({
@@ -420,17 +464,16 @@ const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGu
 
     if (last.type === "reject") {
       // Restore rejected suggestion
-      setSuggestions((prev) => {
-        const updated = [...prev[last.category]];
-        updated[last.index] = { ...last.item, visible: true };
-        return { ...prev, [last.category]: updated };
-      });
+      const updatedItems = [...suggestions[last.category]];
+      updatedItems[last.index] = { ...last.item, visible: true };
+      const updatedSuggestions = { ...suggestions, [last.category]: updatedItems };
+      setSuggestions(updatedSuggestions);
       // Remove from session rejections
-      setSessionRejections((prev) => {
-        const idx = prev.lastIndexOf(last.item.text);
-        if (idx >= 0) { const n = [...prev]; n.splice(idx, 1); return n; }
-        return prev;
-      });
+      const newRejections = [...sessionRejections];
+      const rIdx = newRejections.lastIndexOf(last.item.text);
+      if (rIdx >= 0) newRejections.splice(rIdx, 1);
+      setSessionRejections(newRejections);
+      persistAiState({ suggestions: updatedSuggestions, sessionRejections: newRejections });
     } else if (last.type === "titleChange") {
       // Revert the title
       if (onEditClipTitle) {
@@ -439,6 +482,7 @@ const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGu
       }
       setAppliedTitle(null);
       setSelectedTitle(null);
+      persistAiState({ appliedTitle: null, selectedTitle: null });
     }
   };
 
@@ -539,17 +583,20 @@ const GenerationPanel = ({ clip, project, gamesDb = [], anthropicApiKey, styleGu
 };
 
 // ============ CLIP BROWSER ============
-export function ClipBrowser({ project, onBack, onUpdateClip, onTranscript, onEditClipTitle, onRefreshProject, gamesDb, anthropicApiKey, styleGuide }) {
+export function ClipBrowser({ project, onBack, onUpdateClip, onTranscript, onEditClipTitle, onUpdateClipAiState, onEditClipTranscript, onRefreshProject, gamesDb, anthropicApiKey, styleGuide }) {
   const [filter, setFilter] = useState("all");
   const [editId, setEditId] = useState(null);
   const [editText, setEditText] = useState("");
   const [titleHistory, setTitleHistory] = useState([]); // [{clipId, oldTitle, newTitle}]
   const [expandedClip, setExpandedClip] = useState(null); // clipId or null
   const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const clips = project.clips || [];
   const isApproved = (c) => c.status === "approved" || c.status === "ready";
-  const filtered = clips.filter((c) => filter === "approved" ? isApproved(c) : filter === "pending" ? c.status === "none" : true);
+  const filtered = clips
+    .filter((c) => filter === "approved" ? isApproved(c) : filter === "pending" ? c.status === "none" : true)
+    .filter((c) => !searchQuery.trim() || (c.title || "").toLowerCase().includes(searchQuery.trim().toLowerCase()));
   const approved = clips.filter(isApproved).length;
   const pending = clips.filter((c) => c.status === "none").length;
 
@@ -562,7 +609,7 @@ export function ClipBrowser({ project, onBack, onUpdateClip, onTranscript, onEdi
             onClick={async () => {
               setRefreshing(true);
               try { await onRefreshProject(project.id); } catch (_) {}
-              setTimeout(() => setRefreshing(false), 600);
+              setRefreshing(false);
             }}
             disabled={refreshing}
             title="Refresh clips from Vizard"
@@ -584,7 +631,16 @@ export function ClipBrowser({ project, onBack, onUpdateClip, onTranscript, onEdi
 
       <TabBar tabs={[{ id: "all", label: "All", count: clips.length }, { id: "pending", label: "Pending", count: pending }, { id: "approved", label: "Approved", count: approved }]} active={filter} onChange={setFilter} />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 16 }}>
+      <div style={{ marginTop: 12 }}>
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search clips by title..."
+          style={{ width: "100%", background: "rgba(255,255,255,0.04)", border: `1px solid ${T.border}`, borderRadius: T.radius.md, padding: "10px 14px", color: T.text, fontSize: 13, fontFamily: T.font, outline: "none", boxSizing: "border-box" }}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
         {filtered.map((clip) => {
           const ca = isApproved(clip);
           const rej = clip.status === "rejected";
@@ -628,6 +684,7 @@ export function ClipBrowser({ project, onBack, onUpdateClip, onTranscript, onEdi
                   anthropicApiKey={anthropicApiKey}
                   styleGuide={styleGuide}
                   onEditClipTitle={onEditClipTitle}
+                  onUpdateClipAiState={onUpdateClipAiState}
                   onTitleHistory={(entry) => setTitleHistory((h) => [...h, entry])}
                 />
               )}

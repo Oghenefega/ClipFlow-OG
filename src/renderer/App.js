@@ -125,6 +125,7 @@ function mapVizardClips(videos, existingClips = []) {
         title: existing.titleEdited ? existing.title : clip.title,
         titleEdited: existing.titleEdited || false,
         status: existing.status,
+        aiState: existing.aiState || null,
       };
     }
     return clip;
@@ -488,6 +489,26 @@ export default function App() {
     }));
   }, []);
 
+  const handleUpdateClipAiState = useCallback((projectId, clipId, aiState) => {
+    setVizardProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      return {
+        ...p,
+        clips: (p.clips || []).map((c) => (c.id === clipId ? { ...c, aiState } : c)),
+      };
+    }));
+  }, []);
+
+  const handleEditClipTranscript = useCallback((projectId, clipId, transcript) => {
+    setVizardProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      return {
+        ...p,
+        clips: (p.clips || []).map((c) => (c.id === clipId ? { ...c, transcript } : c)),
+      };
+    }));
+  }, []);
+
   const handleResetUploads = useCallback(() => {
     setUploadedFiles({});
     persist("uploadedFiles", {});
@@ -632,6 +653,8 @@ export default function App() {
           onUpdateClip={handleUpdateClip}
           onTranscript={setTranscript}
           onEditClipTitle={handleEditClipTitle}
+          onUpdateClipAiState={handleUpdateClipAiState}
+          onEditClipTranscript={handleEditClipTranscript}
           onRefreshProject={handlePollProject}
           gamesDb={gamesDb}
           anthropicApiKey={anthropicApiKey}
@@ -672,7 +695,13 @@ export default function App() {
           onNavigate={nav}
         />
       </div>
-      <TranscriptModal clip={transcript} onClose={() => setTranscript(null)} />
+      <TranscriptModal clip={transcript} onClose={() => setTranscript(null)} onSaveTranscript={(clipId, newTranscript) => {
+        // Find which project this clip belongs to
+        const proj = vizardProjects.find((p) => (p.clips || []).some((c) => c.id === clipId));
+        if (proj) handleEditClipTranscript(proj.id, clipId, newTranscript);
+        // Update the transcript modal's clip reference too
+        setTranscript((prev) => prev ? { ...prev, transcript: newTranscript } : null);
+      }} />
       {(newGameExe || showAddGame) && (
         <AddGameModal
           exe={newGameExe}

@@ -235,21 +235,48 @@ export const GameEditModal = ({ game, onSave, onClose, anthropicApiKey }) => {
 };
 
 // ============ TRANSCRIPT MODAL ============
-export const TranscriptModal = ({ clip, onClose }) => {
+export const TranscriptModal = ({ clip, onClose, onSaveTranscript }) => {
+  const [editing, setEditing] = React.useState(false);
+  const [text, setText] = React.useState(clip ? clip.transcript || "" : "");
+
   if (!clip) return null;
+
+  const handleSave = () => {
+    if (onSaveTranscript) onSaveTranscript(clip.id, text);
+    setEditing(false);
+  };
+
   return (
     <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: T.surface, borderRadius: T.radius.xl, maxWidth: 540, width: "100%", border: `1px solid ${T.borderHover}`, maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "28px 28px 0 28px", flexShrink: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <h3 style={{ color: T.text, fontSize: 18, fontWeight: 700, margin: 0, flex: 1, marginRight: 16 }}>{clip.title}</h3>
-            <button onClick={onClose} style={{ background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 8, padding: "8px 12px", color: T.textTertiary, cursor: "pointer" }}>✕</button>
+            <div style={{ display: "flex", gap: 6 }}>
+              {editing ? (
+                <>
+                  <button onClick={handleSave} style={{ background: T.green, border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: T.font }}>Save</button>
+                  <button onClick={() => { setText(clip.transcript || ""); setEditing(false); }} style={{ background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 8, padding: "8px 12px", color: T.textTertiary, cursor: "pointer", fontSize: 12 }}>Cancel</button>
+                </>
+              ) : (
+                <button onClick={() => setEditing(true)} style={{ background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 8, padding: "8px 12px", color: T.textSecondary, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: T.font }}>{"\u270e"} Edit</button>
+              )}
+              <button onClick={onClose} style={{ background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 8, padding: "8px 12px", color: T.textTertiary, cursor: "pointer" }}>✕</button>
+            </div>
           </div>
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: "0 28px 28px 28px" }}>
-          <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: T.radius.md, padding: 20, color: T.textSecondary, fontSize: 15, lineHeight: 1.9, fontFamily: T.mono, whiteSpace: "pre-wrap" }}>
-            {clip.transcript}
-          </div>
+          {editing ? (
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              style={{ width: "100%", minHeight: 300, background: "rgba(255,255,255,0.03)", border: `1px solid ${T.accentBorder}`, borderRadius: T.radius.md, padding: 20, color: T.textSecondary, fontSize: 15, lineHeight: 1.9, fontFamily: T.mono, resize: "vertical", outline: "none", boxSizing: "border-box" }}
+            />
+          ) : (
+            <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: T.radius.md, padding: 20, color: T.textSecondary, fontSize: 15, lineHeight: 1.9, fontFamily: T.mono, whiteSpace: "pre-wrap" }}>
+              {clip.transcript || "No transcript available."}
+            </div>
+          )}
         </div>
       </div>
     </div>
